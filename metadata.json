@@ -1,0 +1,6 @@
+{
+  "name": "BKP Digital — Sistem Buku Kejar Prestasi",
+  "description": "Aplikasi digitalisasi buku catatan pembiasaan siswa, poin karakter, dan tanda tangan orang tua untuk SMK Thibbil Qulub Assimbani.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

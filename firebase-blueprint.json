@@ -1,0 +1,115 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Profil pengguna mencakup Siswa, Orang Tua, dan Guru/BK",
+      "type": "object",
+      "properties": {
+        "full_name": { "type": "string", "maxLength": 100 },
+        "role": { "type": "string", "enum": ["siswa", "orang_tua", "guru"] },
+        "kelas": { "type": "string", "maxLength": 50 },
+        "rayon": { "type": "string", "maxLength": 50 },
+        "nisn": { "type": "string", "maxLength": 30 },
+        "anak_id": { "type": "string", "maxLength": 128 },
+        "anak_nama": { "type": "string", "maxLength": 100 },
+        "total_poin": { "type": "number" },
+        "email": { "type": "string", "maxLength": 100 }
+      },
+      "required": ["full_name", "role", "email"]
+    },
+    "Student": {
+      "title": "Student",
+      "description": "Data master siswa di SMK Thibbil Qulub Assimbani",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "maxLength": 100 },
+        "nisn": { "type": "string", "maxLength": 30 },
+        "kelas": { "type": "string", "maxLength": 50 },
+        "rayon": { "type": "string", "maxLength": 50 },
+        "points": { "type": "number" },
+        "waliName": { "type": "string", "maxLength": 100 },
+        "waliPhone": { "type": "string", "maxLength": 30 },
+        "waliEmail": { "type": "string", "maxLength": 100 },
+        "studentEmail": { "type": "string", "maxLength": 100 },
+        "dibuat_oleh": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["name", "nisn", "kelas", "rayon"]
+    },
+    "PembiasaanHarian": {
+      "title": "PembiasaanHarian",
+      "description": "Jurnal harian ibadah dan pembiasaan siswa dengan status audit pengisian tepat waktu vs susulan",
+      "type": "object",
+      "properties": {
+        "siswa_id": { "type": "string", "maxLength": 128 },
+        "tanggal": { "type": "string", "maxLength": 20 },
+        "status_pengisian": { "type": "string", "enum": ["tepat_waktu", "susulan", "terkunci"] },
+        "submitted_at": { "type": "string", "maxLength": 40 },
+        "subuh": { "type": "string", "maxLength": 30 },
+        "dzuhur": { "type": "string", "maxLength": 30 },
+        "ashar": { "type": "string", "maxLength": 30 },
+        "maghrib": { "type": "string", "maxLength": 30 },
+        "isya": { "type": "string", "maxLength": 30 },
+        "tahajud": { "type": "string", "maxLength": 30 },
+        "dhuha": { "type": "string", "maxLength": 30 },
+        "mengaji": { "type": "boolean" },
+        "bangun_subuh": { "type": "boolean" },
+        "tidur_awal": { "type": "boolean" },
+        "air_putih": { "type": "boolean" },
+        "grooming": { "type": "boolean" },
+        "catatan": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["siswa_id", "tanggal"]
+    },
+    "PembiasaanMingguan": {
+      "title": "PembiasaanMingguan",
+      "description": "Rekapitulasi pekanan dan pengesahan tanda tangan orang tua",
+      "type": "object",
+      "properties": {
+        "siswa_id": { "type": "string", "maxLength": 128 },
+        "minggu_ke": { "type": "number" },
+        "sholat_jumat": { "type": "boolean" },
+        "puasa_sunnah": { "type": "boolean" },
+        "piket_rayon": { "type": "boolean" },
+        "ttd_ortu": { "type": "boolean" },
+        "ttd_url": { "type": "string", "maxLength": 500000 }
+      },
+      "required": ["siswa_id", "minggu_ke"]
+    },
+    "PoinLog": {
+      "title": "PoinLog",
+      "description": "Catatan apresiasi dan konsekuensi poin karakter BKP",
+      "type": "object",
+      "properties": {
+        "siswa_id": { "type": "string", "maxLength": 128 },
+        "tipe": { "type": "string", "enum": ["apresiasi", "konsekuensi"] },
+        "kode": { "type": "string", "maxLength": 20 },
+        "deskripsi": { "type": "string", "maxLength": 500 },
+        "poin": { "type": "number" },
+        "dicatat_oleh": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["siswa_id", "tipe", "kode", "poin"]
+    }
+  },
+  "firestore": {
+    "/profiles/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Dokumen profil user"
+    },
+    "/students/{studentId}": {
+      "schema": { "$ref": "#/entities/Student" },
+      "description": "Master data siswa SMK Thibbil Qulub Assimbani"
+    },
+    "/pembiasaan_harian/{jurnalId}": {
+      "schema": { "$ref": "#/entities/PembiasaanHarian" },
+      "description": "Dokumen jurnal pembiasaan harian siswa"
+    },
+    "/pembiasaan_mingguan/{rekapId}": {
+      "schema": { "$ref": "#/entities/PembiasaanMingguan" },
+      "description": "Dokumen rekap mingguan dan TTD orang tua"
+    },
+    "/poin_log/{logId}": {
+      "schema": { "$ref": "#/entities/PoinLog" },
+      "description": "Riwayat mutasi poin karakter"
+    }
+  }
+}
