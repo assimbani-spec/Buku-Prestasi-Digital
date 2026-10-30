@@ -5,13 +5,19 @@
 
 import React, { useState } from 'react';
 import { UserPlus, X, Save, AlertCircle, CheckCircle2, School, User, Phone, Mail, Award, MapPin } from 'lucide-react';
-import { db, handleFirestoreError, OperationType, StudentRecord } from '../lib/firebase';
-import { doc, setDoc } from 'firebase/firestore';
+import { db } from '../lib/data';
+import type { StudentRecord } from '../lib/firebase';
+import { doc, serverTimestamp, writeBatch } from '../lib/data';
+import { buildAuditPayload, newAuditRef } from '../lib/audit';
 
 interface TambahSiswaModalProps {
   isOpen: boolean;
   onClose: () => void;
   onStudentAdded: (newStudent: StudentRecord) => void;
+  /** Role pelaku, dipakai untuk audit log. */
+  actorRole?: string;
+  /** Akun pelaku (uid, email) untuk audit log. */
+  actor?: { uid: string; email: string | null } | null;
 }
 
 const DAFTAR_KELAS = [
@@ -44,6 +50,8 @@ export const TambahSiswaModal: React.FC<TambahSiswaModalProps> = ({
   isOpen,
   onClose,
   onStudentAdded,
+  actorRole,
+  actor,
 }) => {
   const [name, setName] = useState('');
   const [nisn, setNisn] = useState('');
@@ -91,14 +99,39 @@ export const TambahSiswaModal: React.FC<TambahSiswaModalProps> = ({
     };
 
     try {
-      // Simpan ke Firestore
-      await setDoc(doc(db, 'students', newId), {
+      const user = actor;
+      if (!user) {
+        throw new Error('Sesi berakhir. Silakan masuk kembali.');
+      }
+
+      // Master santri + audit log ditulis atomik.
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'students', newId), {
         ...studentData,
-        dibuat_oleh: 'Guru / BK SMK Thibbil Qulub Assimbani',
+        dibuat_oleh: user.uid,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
       });
+      batch.set(
+        newAuditRef(),
+        buildAuditPayload({
+          actor: { uid: user.uid, email: user.email, role: actorRole },
+          action: 'student_create',
+          collectionName: 'students',
+          docId: newId,
+          siswaId: newId,
+          rayon,
+          after: { nama: studentData.name, nisn: studentData.nisn, kelas, rayon },
+        })
+      );
+      await batch.commit();
     } catch (err) {
-      console.warn('Firestore write warning:', err);
-      // Tetap lanjutkan pembaruan state lokal
+      // Jangan lanjut seolah berhasil: data harus benar-benar tersimpan.
+      setLoading(false);
+      setErrorMsg(
+        'Gagal menyimpan data ke database: ' + (err instanceof Error ? err.message : String(err))
+      );
+      return;
     }
 
     setLoading(false);
@@ -160,7 +193,7 @@ export const TambahSiswaModal: React.FC<TambahSiswaModalProps> = ({
 
           {/* Section: Identitas Santri */}
           <div className="space-y-3">
-            <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider block border-b border-gray-100 pb-1">
+            <span className="text-xs font-bold text-gray-500 uppercase tracking-wider block border-b border-gray-100 pb-1">
               1. Identitas Akademik Santri
             </span>
 
@@ -261,7 +294,7 @@ export const TambahSiswaModal: React.FC<TambahSiswaModalProps> = ({
 
           {/* Section: Orang Tua / Wali */}
           <div className="space-y-3 pt-2">
-            <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider block border-b border-gray-100 pb-1">
+            <span className="text-xs font-bold text-gray-500 uppercase tracking-wider block border-b border-gray-100 pb-1">
               2. Data Orang Tua / Wali Santri
             </span>
 

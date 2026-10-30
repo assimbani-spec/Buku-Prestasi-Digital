@@ -3,102 +3,29 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>BKP Digital — Sistem Buku Kejar Prestasi | SMK Thibbil Qulub Assimbani</title>
-    <meta name="description" content="Aplikasi digitalisasi buku catatan pembiasaan siswa, poin karakter, dan tanda tangan orang tua untuk SMK Thibbil Qulub Assimbani." />
-    <meta property="og:title" content="BKP Digital — Sistem Buku Kejar Prestasi" />
-    <meta property="og:description" content="Aplikasi digitalisasi buku catatan pembiasaan siswa, poin karakter, dan tanda tangan orang tua untuk SMK Thibbil Qulub Assimbani." />
+    <title>BKP Digital | Buku Kejar Prestasi SMK Thibbil Qulub Assimbani</title>
+    <meta
+      name="description"
+      content="Buku Kejar Prestasi digital: jurnal pembiasaan harian, poin karakter, pengajuan prestasi, dan pengesahan orang tua SMK Thibbil Qulub Assimbani."
+    />
+    <meta name="theme-color" content="#1B5E20" />
+    <meta name="color-scheme" content="light" />
+    <meta property="og:title" content="BKP Digital | Buku Kejar Prestasi" />
+    <meta
+      property="og:description"
+      content="Jurnal pembiasaan, poin karakter, dan pengesahan orang tua SMK Thibbil Qulub Assimbani."
+    />
     <meta property="og:type" content="website" />
-    <meta name="twitter:card" content="summary_large_image" />
-    <script>
-      (function() {
-        try {
-          var rawFetch = window.fetch;
-          var _storedFetch = typeof rawFetch === 'function' ? rawFetch.bind(window) : rawFetch;
-
-          function applyFetchShim(target) {
-            if (!target || target === Object.prototype || target === EventTarget.prototype) return;
-            try {
-              var desc = Object.getOwnPropertyDescriptor(target, 'fetch');
-              if (!desc || desc.configurable || (desc.get && !desc.set)) {
-                Object.defineProperty(target, 'fetch', {
-                  configurable: true,
-                  enumerable: false,
-                  get: function() {
-                    return _storedFetch;
-                  },
-                  set: function(newFetch) {
-                    _storedFetch = newFetch;
-                  }
-                });
-              }
-            } catch (e) {}
-          }
-
-          applyFetchShim(window);
-          if (typeof Window !== 'undefined' && Window.prototype) {
-            applyFetchShim(Window.prototype);
-          }
-        } catch (err) {}
-
-        function isExtensionError(eventOrMsg, source, lineno, colno, err) {
-          var src = source || (eventOrMsg && eventOrMsg.filename) || '';
-          var msg = (typeof eventOrMsg === 'string' ? eventOrMsg : (eventOrMsg && eventOrMsg.message)) || '';
-          var stack = (err && err.stack) || (eventOrMsg && eventOrMsg.error && eventOrMsg.error.stack) || '';
-          
-          if (typeof src === 'string' && (src.indexOf('chrome-extension://') !== -1 || src.indexOf('moz-extension://') !== -1)) {
-            return true;
-          }
-          if (typeof stack === 'string' && (stack.indexOf('chrome-extension://') !== -1 || stack.indexOf('moz-extension://') !== -1)) {
-            return true;
-          }
-          if (typeof msg === 'string' && (msg.indexOf('Cannot set property fetch') !== -1 || msg.indexOf('which has only a getter') !== -1)) {
-            return true;
-          }
-          return false;
-        }
-
-        window.addEventListener('error', function(e) {
-          if (isExtensionError(e, e.filename, e.lineno, e.colno, e.error)) {
-            e.preventDefault();
-            e.stopPropagation();
-            if (typeof e.stopImmediatePropagation === 'function') {
-              e.stopImmediatePropagation();
-            }
-            return true;
-          }
-        }, true);
-
-        window.addEventListener('unhandledrejection', function(e) {
-          var reason = e && e.reason;
-          if (isExtensionError(reason && reason.message, '', 0, 0, reason)) {
-            e.preventDefault();
-            e.stopPropagation();
-            if (typeof e.stopImmediatePropagation === 'function') {
-              e.stopImmediatePropagation();
-            }
-            return true;
-          }
-        }, true);
-
-        var prevOnError = window.onerror;
-        window.onerror = function(msg, source, lineno, colno, err) {
-          if (isExtensionError(msg, source, lineno, colno, err)) {
-            return true;
-          }
-          if (typeof prevOnError === 'function') {
-            return prevOnError.apply(this, arguments);
-          }
-          return false;
-        };
-      })();
-    </script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <meta name="twitter:card" content="summary" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
   </head>
-  <body class="font-sans antialiased bg-[#E8F5E9] text-gray-800">
+  <body class="font-sans antialiased">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-

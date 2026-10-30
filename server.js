@@ -18,14 +18,16 @@ app.get("/api/health", (_req, res) => {
 });
 var distPath = path.resolve(__dirname, "dist");
 var buildPath = path.resolve(__dirname, "build");
-var staticDir = fs.existsSync(distPath) ? distPath : fs.existsSync(buildPath) ? buildPath : __dirname;
-app.use(express.static(staticDir));
+var staticDir = fs.existsSync(distPath) ? distPath : fs.existsSync(buildPath) ? buildPath : null;
+if (staticDir) {
+  app.use(express.static(staticDir));
+}
 app.all(/.*/, (req, res) => {
-  const indexPath = path.join(staticDir, "index.html");
-  if (fs.existsSync(indexPath)) {
+  const indexPath = staticDir ? path.join(staticDir, "index.html") : null;
+  if (indexPath && fs.existsSync(indexPath)) {
     res.sendFile(indexPath);
   } else {
-    res.status(404).send("BKP Digital application build not found. Please run npm run build.");
+    res.status(503).send("BKP Digital: hasil build belum tersedia. Jalankan `npm run build` sebelum `npm start`.");
   }
 });
 app.listen(PORT, () => {

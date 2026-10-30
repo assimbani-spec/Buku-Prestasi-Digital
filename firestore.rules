@@ -1,61 +1,330 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // Global Safety Net
-    match /{document=**} {
-      allow read, write: if false;
-    }
 
+    // ════════════════════════════════════════════════════════════════
+    // Helper dasar: identitas & profil
+    // ════════════════════════════════════════════════════════════════
     function isSignedIn() {
       return request.auth != null;
     }
 
+    function myUid() {
+      return request.auth.uid;
+    }
+
+    function myEmail() {
+      return request.auth.token.email;
+    }
+
+    function profileRef(uid) {
+      return /databases/$(database)/documents/profiles/$(uid);
+    }
+
+    function hasProfile() {
+      return isSignedIn() && exists(profileRef(myUid()));
+    }
+
+    function prof() {
+      return get(profileRef(myUid())).data;
+    }
+
+    function roleOf() {
+      return hasProfile() ? prof().role : '';
+    }
+
+    // ── 5 peran ──────────────────────────────────────────────────────
     function isAdmin() {
-      return isSignedIn() && request.auth.token.email == 'admassimbani@gmail.com';
+      return hasProfile() && roleOf() == 'admin';
     }
 
-    function isOwner(userId) {
-      return isSignedIn() && request.auth.uid == userId;
+    function isGuru() {
+      return hasProfile() && roleOf() == 'guru';
     }
 
-    function getUserRole() {
-      return get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role;
+    function isPembimbing() {
+      return hasProfile() && roleOf() == 'pembimbing_rayon';
     }
 
-    // Profiles Collection
+    function isGuruOrAdmin() {
+      return isGuru() || isAdmin();
+    }
+
+    function isStaff() {
+      return isGuruOrAdmin() || isPembimbing();
+    }
+
+    function isSiswa() {
+      return hasProfile() && roleOf() == 'siswa';
+    }
+
+    function isOrtu() {
+      return hasProfile() && roleOf() == 'orang_tua';
+    }
+
+    // ── Field profil yang dipakai untuk scoping ──────────────────────
+    // Ditulis dengan pengecekan `in` agar profil lama (tanpa field baru)
+    // tidak memicu error evaluasi yang membuat rule selalu deny.
+    function myRayon() {
+      return ('rayonId' in prof()) ? prof().rayonId : '';
+    }
+
+    function myStudentId() {
+      return ('studentId' in prof())
+        ? prof().studentId
+        : (('anak_id' in prof()) ? prof().anak_id : '');
+    }
+
+    function myChildIds() {
+      return ('childIds' in prof())
+        ? prof().childIds
+        : (('anak_id' in prof()) ? [prof().anak_id] : []);
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // Profiles
+    // ════════════════════════════════════════════════════════════════
     match /profiles/{userId} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && (isOwner(userId) || isAdmin());
+      allow read: if isSignedIn() && (myUid() == userId || isGuruOrAdmin());
+
+      // Profil baru hanya boleh dibuat dengan hak terendah (siswa) dan
+      // tanpa field penautan apa pun (studentId/childIds/rayonId).
+      allow create: if myUid() == userId
+        && request.resource.data.role == 'siswa'
+        && !('studentId' in request.resource.data)
+        && !('childIds' in request.resource.data)
+        && !('rayonId' in request.resource.data);
+
+      // Hanya admin yang boleh mengubah role / penautan / total_poin.
+      // Pemilik hanya boleh menyunting data kontak & nama tampilan.
+      allow update: if isAdmin()
+        || (myUid() == userId
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['fullName', 'phone', 'avatarUrl', 'updatedAt']));
+
       allow delete: if isAdmin();
     }
 
-    // Master Data Siswa
+    // ════════════════════════════════════════════════════════════════
+    // Master Santri
+    //   ρ guru/admin  : semua
+    //   ρ pembimbing  : hanya rayon-nya
+    //   ρ siswa       : hanya dirinya
+    //   ρ orang tua   : hanya childIds
+    // ════════════════════════════════════════════════════════════════
     match /students/{studentId} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn();
+      allow read: if isGuruOrAdmin()
+        || (isPembimbing() && resource.data.rayon == myRayon())
+        || (isSiswa()
+            && (myStudentId() == studentId
+                || (('studentEmail' in resource.data)
+                    && resource.data.studentEmail == myEmail())))
+        || (isOrtu()
+            && ((studentId in myChildIds())
+                || (('waliEmail' in resource.data)
+                    && resource.data.waliEmail == myEmail())));
+
+      allow create: if isGuruOrAdmin()
+        && request.resource.data.name is string
+        && request.resource.data.nisn is string
+        && request.resource.data.points is number;
+
+      allow update: if isGuruOrAdmin()
+        // Pembimbing rayon: hanya poin di rayonnya, tidak boleh memindah rayon.
+        || (isPembimbing()
+            && resource.data.rayon == myRayon()
+            && request.resource.data.rayon == resource.data.rayon
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['points', 'updatedAt']))
+        // Siswa: hanya menambah poin hariannya sendiri, maksimal +100 sekali tulis.
+        || (isSiswa()
+            && myStudentId() == studentId
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['points', 'updatedAt', 'lastJournalDate'])
+            && request.resource.data.points >= resource.data.points
+            && request.resource.data.points <= resource.data.points + 100);
+
       allow delete: if isAdmin();
     }
 
-    // Pembiasaan Harian
+    // ════════════════════════════════════════════════════════════════
+    // Jurnal pembiasaan harian (id dokumen: "<uid>_<YYYY-MM-DD>")
+    // ════════════════════════════════════════════════════════════════
     match /pembiasaan_harian/{jurnalId} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn();
-      allow delete: if isAdmin();
+      allow read: if isGuruOrAdmin()
+        || (isPembimbing() && resource.data.rayon == myRayon())
+        || (isSiswa() && jurnalId.split('_')[0] == myUid())
+        || (isOrtu() && resource.data.student_id in myChildIds());
+
+      allow create, update: if isGuruOrAdmin()
+        || (isPembimbing() && request.resource.data.rayon == myRayon())
+        || (isSiswa()
+            && jurnalId.split('_')[0] == myUid()
+            && request.resource.data.student_id == myStudentId());
+
+      allow delete: if isGuruOrAdmin();
     }
 
-    // Pembiasaan Mingguan (TTD Ortu)
+    // ════════════════════════════════════════════════════════════════
+    // Rekap mingguan & pengesahan TTD orang tua
+    // ════════════════════════════════════════════════════════════════
     match /pembiasaan_mingguan/{rekapId} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn();
+      allow read: if isGuruOrAdmin()
+        || (isPembimbing() && resource.data.rayon == myRayon())
+        || (isSiswa() && resource.data.siswa_id == myStudentId())
+        || (isOrtu() && resource.data.siswa_id in myChildIds());
+
+      allow create: if isGuruOrAdmin()
+        || (isPembimbing() && request.resource.data.rayon == myRayon())
+        || (isOrtu() && request.resource.data.siswa_id in myChildIds());
+
+      allow update: if isGuruOrAdmin()
+        || (isPembimbing()
+            && resource.data.rayon == myRayon()
+            && request.resource.data.siswa_id == resource.data.siswa_id)
+        // Orang tua hanya boleh mengisi kolom pengesahan.
+        || (isOrtu()
+            && resource.data.siswa_id in myChildIds()
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['ttd_ortu', 'ttd_url', 'catatan_ortu', 'updatedAt', 'dicatat_oleh']));
+
+      allow delete: if isGuruOrAdmin();
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // Poin log (apresiasi & konsekuensi)
+    // ════════════════════════════════════════════════════════════════
+    match /poin_log/{logId} {
+      allow read: if isGuruOrAdmin()
+        || (isPembimbing() && resource.data.rayon == myRayon())
+        || (isSiswa() && resource.data.siswa_id == myStudentId())
+        || (isOrtu() && resource.data.siswa_id in myChildIds());
+
+      allow create: if isStaff()
+        && request.resource.data.dicatat_oleh == myUid()
+        && request.resource.data.siswa_id is string
+        && request.resource.data.poin is number
+        && request.resource.data.rayon is string
+        && (!isPembimbing() || request.resource.data.rayon == myRayon());
+
+      allow update, delete: if isAdmin();
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // Pengajuan prestasi (siswa submit → staff verifikasi)
+    // ════════════════════════════════════════════════════════════════
+    match /prestasi/{prestasiId} {
+      allow read: if isGuruOrAdmin()
+        || (isPembimbing() && resource.data.rayon == myRayon())
+        || (isSiswa() && resource.data.siswa_id == myStudentId())
+        || (isOrtu() && resource.data.siswa_id in myChildIds());
+
+      // Siswa mengajukan: status WAJIB pending, poin WAJIB 0,
+      // verifiedBy WAJIB tidak ada. Tidak bisa diakali dari klien.
+      allow create: if (isSiswa()
+            && request.resource.data.siswa_id == myStudentId()
+            && request.resource.data.status == 'pending'
+            && request.resource.data.poin == 0
+            && !('verifiedBy' in request.resource.data)
+            && request.resource.data.createdBy == myUid())
+        || (isStaff()
+            && request.resource.data.createdBy == myUid()
+            && request.resource.data.status == 'pending'
+            && request.resource.data.poin == 0
+            && !('verifiedBy' in request.resource.data)
+            && request.resource.data.siswa_id is string
+            && request.resource.data.rayon is string
+            && (!isPembimbing() || request.resource.data.rayon == myRayon()));
+
+      allow update: if (isStaff()
+            && request.resource.data.status in ['verified', 'rejected']
+            && request.resource.data.verifiedBy == myUid()
+            && request.resource.data.verifiedAt is timestamp
+            && request.resource.data.poin is number
+            && request.resource.data.poin >= 0
+            && request.resource.data.poin <= 5000
+            && request.resource.data.siswa_id == resource.data.siswa_id
+            && request.resource.data.createdBy == resource.data.createdBy
+            && request.resource.data.rayon == resource.data.rayon
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['status', 'poin', 'verifiedBy', 'verifiedAt',
+                           'catatan_verifikasi', 'updatedAt'])
+            && (!isPembimbing() || resource.data.rayon == myRayon()))
+        // Siswa hanya boleh menyunting isi pengajuan, dan hanya selama pending.
+        || (isSiswa()
+            && resource.data.siswa_id == myStudentId()
+            && resource.data.status == 'pending'
+            && request.resource.data.status == 'pending'
+            && request.resource.data.poin == resource.data.poin
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['judul', 'kategori', 'tingkat', 'capaian',
+                           'tanggal', 'deskripsi', 'lampiranUrl', 'updatedAt']));
+
+      allow delete: if isAdmin()
+        || (isSiswa()
+            && resource.data.siswa_id == myStudentId()
+            && resource.data.status == 'pending');
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // Kegiatan non-rutin (id dokumen: "<studentId>_<tahun>_P<pekan>")
+    // ════════════════════════════════════════════════════════════════
+    match /pembiasaan_non_rutin/{docId} {
+      allow read: if isGuruOrAdmin()
+        || (isPembimbing() && resource.data.rayon == myRayon())
+        || (isSiswa() && resource.data.siswa_id == myStudentId())
+        || (isOrtu() && resource.data.siswa_id in myChildIds());
+
+      allow create, update: if isGuruOrAdmin()
+        || (isPembimbing() && request.resource.data.rayon == myRayon())
+        || (isSiswa()
+            && request.resource.data.siswa_id == myStudentId()
+            && request.resource.data.dicatat_oleh == myUid());
+
       allow delete: if isAdmin();
     }
 
-    // Poin Log (Guru & Konselor)
-    match /poin_log/{logId} {
+    // ════════════════════════════════════════════════════════════════
+    // Audit log — append-only, tidak bisa diubah/dihapus siapa pun
+    // ════════════════════════════════════════════════════════════════
+    match /audit_log/{logId} {
+      allow read: if isGuruOrAdmin();
+      allow create: if isSignedIn()
+        && request.resource.data.actorId == myUid()
+        && request.resource.data.action is string
+        && request.resource.data.createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // Master data — dibaca semua staf & siswa, ditulis hanya admin
+    // ════════════════════════════════════════════════════════════════
+    match /master_kelas/{kelasId} {
       allow read: if isSignedIn();
-      allow create, update: if isSignedIn();
-      allow delete: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    match /master_rayon/{rayonId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /master_kategori_poin/{kode} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // Notifikasi
+    // ════════════════════════════════════════════════════════════════
+    match /notifikasi/{notifId} {
+      allow read: if isSignedIn() && resource.data.user_id == myUid();
+      allow write: if isStaff();
+    }
+
+    // Safety net terakhir
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

@@ -1,10 +1,5 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
-import React from 'react';
-import { X, User, Award, Calendar, CheckCircle2, AlertTriangle, Clock, Phone, Mail, ShieldAlert } from 'lucide-react';
+import React, { useEffect, useRef } from 'react';
+import { X, Award, Phone, Mail, AlertTriangle } from 'lucide-react';
 import { StudentRecord } from '../lib/firebase';
 
 interface DetailSiswaModalProps {
@@ -14,129 +9,142 @@ interface DetailSiswaModalProps {
   onInputPoin: (studentId: string) => void;
 }
 
+const tidakAda = <span className="font-normal text-muted">Belum diisi admin</span>;
+
 export const DetailSiswaModal: React.FC<DetailSiswaModalProps> = ({
   student,
   isOpen,
   onClose,
   onInputPoin,
 }) => {
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    closeRef.current?.focus();
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen || !student) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-green-100 overflow-hidden my-8 animate-in fade-in duration-200 text-gray-800">
-        
-        {/* Header */}
-        <div className="bg-[#1B5E20] text-white p-5 flex items-start justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-green-800 border-2 border-green-500/30 flex items-center justify-center text-white font-bold text-lg shadow-inner">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-brand-950/60 p-4"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="detail-siswa-judul"
+        className="my-8 w-full max-w-lg overflow-hidden rounded-card border border-line bg-surface text-ink"
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-line bg-brand-800 px-5 py-4 text-white">
+          <div className="flex min-w-0 items-center gap-3">
+            <span
+              aria-hidden="true"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-control border border-white/20 bg-brand-950/40 text-base font-bold"
+            >
               {student.name.charAt(0)}
-            </div>
-            <div>
-              <h2 className="text-base font-bold leading-tight">{student.name}</h2>
-              <p className="text-xs text-green-200 mt-0.5">NISN: {student.nisn || '0081928371'}</p>
-              <div className="flex items-center gap-1.5 mt-1">
-                <span className="bg-green-800 text-[10px] font-bold px-2 py-0.5 rounded-md text-green-100">
-                  {student.kelas}
-                </span>
-                <span className="bg-green-800 text-[10px] font-bold px-2 py-0.5 rounded-md text-green-100">
-                  Rayon {student.rayon}
-                </span>
-              </div>
+            </span>
+            <div className="min-w-0">
+              <h2 id="detail-siswa-judul" className="truncate text-base font-semibold leading-tight">
+                {student.name}
+              </h2>
+              <p className="mt-0.5 text-xs text-brand-100">
+                NISN {student.nisn || 'belum diisi'} · {student.kelas} · Rayon {student.rayon}
+              </p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1 rounded-lg hover:bg-green-800 text-green-200 hover:text-white">
-            <X className="w-5 h-5" />
+          <button
+            ref={closeRef}
+            type="button"
+            onClick={onClose}
+            aria-label="Tutup detail santri"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-control text-brand-100 hover:bg-brand-950/40 hover:text-white"
+          >
+            <X className="h-5 w-5" aria-hidden="true" />
           </button>
         </div>
 
-        <div className="p-5 space-y-4 text-xs">
-          {/* Card Total Poin & Predikat */}
-          <div className="bg-gradient-to-r from-green-50 to-emerald-50 p-3.5 rounded-xl border border-green-200 flex items-center justify-between">
+        <div className="space-y-4 p-5 text-xs">
+          <div className="flex items-center justify-between rounded-control border border-line bg-paper px-4 py-3">
             <div>
-              <span className="text-[10px] text-gray-500 font-semibold block uppercase">Total Poin Karakter BKP</span>
-              <span className="text-2xl font-black text-[#1B5E20]">{student.points} Pts</span>
-            </div>
-            <div className="text-right">
-              <span className="text-[10px] text-gray-500 font-semibold block uppercase">Status Kepatuhan</span>
-              <span className="inline-block bg-green-700 text-white font-bold px-2.5 py-1 rounded-full text-[11px] shadow-xs">
-                {student.points >= 1000 ? 'Mumtaz (Sangat Baik)' : 'Jayyid (Cukup)'}
+              <span className="block text-xs font-semibold uppercase tracking-wide text-muted">
+                Total poin karakter
               </span>
+              <span className="text-2xl font-bold text-brand-800 tabular">{student.points}</span>
             </div>
+            <span className="rounded-control border border-line bg-surface px-2.5 py-1 text-xs font-semibold text-muted">
+              Target 1000
+            </span>
           </div>
 
-          {/* Audit Pengisian Jurnal Santri (Anti Rekayasa Akhir Bulan) */}
-          <div className="border border-gray-200 rounded-xl p-3.5 bg-gray-50/70 space-y-2">
-            <div className="flex items-center justify-between pb-1.5 border-b border-gray-200">
-              <h4 className="font-bold text-gray-800 flex items-center gap-1.5">
-                <Clock className="w-4 h-4 text-emerald-700" />
-                <span>Audit Disiplin Pengisian Jurnal Harian</span>
-              </h4>
-              <span className="text-[10px] font-bold text-green-800 bg-green-100 px-2 py-0.5 rounded-md">
-                Terverifikasi Sistem
-              </span>
-            </div>
-            <p className="text-[11px] text-gray-600 leading-relaxed">
-              Santri wajib mengisi jurnal setiap hari (toleransi maksimal H-1). Pengisian borongan akhir bulan dibatasi dan membutuhkan izin guru.
-            </p>
-            <div className="grid grid-cols-3 gap-2 pt-1 text-center">
-              <div className="bg-white p-2 rounded-lg border border-gray-200">
-                <span className="text-[10px] text-gray-400 block">Tepat Waktu</span>
-                <span className="text-sm font-bold text-green-700">26 Hari</span>
-              </div>
-              <div className="bg-white p-2 rounded-lg border border-gray-200">
-                <span className="text-[10px] text-gray-400 block">Susulan (H-1)</span>
-                <span className="text-sm font-bold text-amber-600">2 Hari</span>
-              </div>
-              <div className="bg-white p-2 rounded-lg border border-gray-200">
-                <span className="text-[10px] text-gray-400 block">Terkunci / Izin</span>
-                <span className="text-sm font-bold text-gray-600">0 Hari</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Data Orang Tua / Wali */}
-          <div className="border border-gray-200 rounded-xl p-3.5 space-y-2">
-            <h4 className="font-bold text-gray-800 pb-1 border-b border-gray-100">
-              Kontak Orang Tua / Wali Santri
-            </h4>
-            <div className="grid grid-cols-2 gap-2 text-xs">
+          <div className="rounded-control border border-line p-3.5">
+            <h3 className="border-b border-line pb-1.5 text-xs font-semibold text-ink">
+              Kontak orang tua / wali
+            </h3>
+            <dl className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
               <div>
-                <span className="text-[10px] text-gray-400 block">Nama Wali</span>
-                <span className="font-semibold text-gray-800">{student.waliName || "Bpk. Ahmad Rifa'i"}</span>
+                <dt className="text-muted">Nama wali</dt>
+                <dd className="font-semibold">{student.waliName || tidakAda}</dd>
               </div>
               <div>
-                <span className="text-[10px] text-gray-400 block">WhatsApp / No. HP</span>
-                <span className="font-semibold text-gray-800 flex items-center gap-1">
-                  <Phone className="w-3 h-3 text-green-700" />
-                  {student.waliPhone || '0812-3456-7890'}
-                </span>
+                <dt className="text-muted">WhatsApp / HP</dt>
+                <dd className="flex items-center gap-1 font-semibold">
+                  {student.waliPhone ? (
+                    <>
+                      <Phone className="h-3 w-3 text-brand-700" aria-hidden="true" />
+                      {student.waliPhone}
+                    </>
+                  ) : (
+                    tidakAda
+                  )}
+                </dd>
               </div>
-              <div className="col-span-2">
-                <span className="text-[10px] text-gray-400 block">Email Terdaftar</span>
-                <span className="font-semibold text-gray-800 flex items-center gap-1">
-                  <Mail className="w-3 h-3 text-gray-500" />
-                  {student.waliEmail || 'ortu1@test.com'}
-                </span>
+              <div className="sm:col-span-2">
+                <dt className="text-muted">Email terdaftar</dt>
+                <dd className="flex items-center gap-1 font-semibold">
+                  {student.waliEmail ? (
+                    <>
+                      <Mail className="h-3 w-3 text-muted" aria-hidden="true" />
+                      {student.waliEmail}
+                    </>
+                  ) : (
+                    tidakAda
+                  )}
+                </dd>
               </div>
-            </div>
+            </dl>
           </div>
 
-          {/* Action Footer */}
-          <div className="pt-2 flex gap-2">
+          <p className="flex items-start gap-2 rounded-control border border-alert/25 bg-alert-50 px-3 py-2.5 text-xs leading-relaxed text-alert">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            Catatan: jumlah hari pengisian jurnal belum dihitung di aplikasi, jadi tidak
+            ditampilkan di sini.
+          </p>
+
+          <div className="flex gap-2 pt-1">
             <button
+              type="button"
               onClick={() => {
                 onClose();
                 onInputPoin(student.id);
               }}
-              className="flex-1 py-2.5 bg-[#2E7D32] hover:bg-[#1B5E20] text-white font-bold rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5"
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-control bg-brand-700 py-2.5 text-xs font-semibold text-white hover:bg-brand-800"
             >
-              <Award className="w-4 h-4" />
-              <span>Input Poin Karakter</span>
+              <Award className="h-4 w-4" aria-hidden="true" />
+              Input poin karakter
             </button>
             <button
+              type="button"
               onClick={onClose}
-              className="px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-xl"
+              className="rounded-control border border-line px-4 py-2.5 text-xs font-semibold text-ink hover:bg-paper"
             >
               Tutup
             </button>

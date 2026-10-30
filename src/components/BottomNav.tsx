@@ -25,23 +25,27 @@ export const BottomNav: React.FC<BottomNavProps> = ({
 }) => {
   const tabs: TabItem[] = role === 'siswa'
     ? [
-        { id: 'home', label: 'Home', icon: Home },
+        { id: 'home', label: 'Beranda', icon: Home },
         { id: 'jurnal', label: 'Jurnal', icon: BookOpen },
         { id: 'kesehatan', label: 'Kesehatan', icon: HeartPulse },
         { id: 'poin', label: 'Poin', icon: Award },
         { id: 'profil', label: 'Profil', icon: User },
       ]
     : [
-        { id: 'home', label: 'Home', icon: Home },
+        { id: 'home', label: 'Beranda', icon: Home },
         { id: 'laporan', label: 'Laporan', icon: TrendingUp },
         { id: 'kesehatan', label: 'Kesehatan', icon: HeartPulse },
         { id: 'ttd', label: 'TTD', icon: PenTool },
+        { id: 'notifikasi', label: 'Info', icon: Bell },
         { id: 'profil', label: 'Profil', icon: User },
       ];
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-30 max-w-md mx-auto">
-      <nav className="bg-white/95 backdrop-blur-md border-t border-green-100 shadow-[0_-4px_20px_rgba(0,0,0,0.06)] px-4 py-2 flex items-center justify-around rounded-t-2xl">
+    <div className="fixed bottom-0 left-0 right-0 z-30 mx-auto max-w-3xl">
+      <nav
+        aria-label="Navigasi utama"
+        className="flex items-stretch justify-around border-t border-line bg-surface px-2 pb-[env(safe-area-inset-bottom)]"
+      >
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -49,31 +53,24 @@ export const BottomNav: React.FC<BottomNavProps> = ({
           return (
             <button
               key={tab.id}
+              type="button"
               onClick={() => onChangeTab(tab.id)}
-              className={`relative flex flex-col items-center justify-center py-1 px-3 rounded-xl transition-all ${
-                isActive
-                  ? 'text-[#2E7D32] font-semibold'
-                  : 'text-gray-400 hover:text-green-800 font-medium'
+              aria-current={isActive ? 'page' : undefined}
+              className={`flex min-h-[56px] flex-1 flex-col items-center justify-center gap-1 px-1 py-2 transition-colors ${
+                isActive ? 'text-brand-800' : 'text-muted hover:text-brand-800'
               }`}
             >
-              <div className="relative">
-                <Icon
-                  className={`w-5 h-5 transition-transform duration-200 ${
-                    isActive ? 'scale-110 stroke-[2.5]' : 'stroke-2'
-                  }`}
-                />
+              <span className="relative">
+                <Icon className="h-5 w-5" aria-hidden="true" />
                 {Boolean(tab.badge && tab.badge > 0) && (
-                  <span className="absolute -top-1 -right-2 bg-red-500 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center shadow-sm">
+                  <span className="absolute -right-2 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-danger text-xs font-bold text-white">
                     {tab.badge}
                   </span>
                 )}
-              </div>
-              <span className={`text-[11px] mt-1 tracking-tight ${isActive ? 'text-[#1B5E20]' : ''}`}>
+              </span>
+              <span className={`text-xs ${isActive ? 'font-semibold' : 'font-medium'}`}>
                 {tab.label}
               </span>
-              {isActive && (
-                <div className="w-1.5 h-1.5 bg-[#2E7D32] rounded-full mt-0.5 animate-pulse" />
-              )}
             </button>
           );
         })}

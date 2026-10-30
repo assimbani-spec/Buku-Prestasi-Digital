@@ -1,1 +1,104 @@
 @import "tailwindcss";
+
+/* ── Token desain ───────────────────────────────────────────────────
+   Identitas mengikuti buku BKP fisik: kertas hijau pucat, tinta hijau
+   tua, garis rambut tipis seperti buku catatan. Satu aksen (amber)
+   hanya untuk hal yang butuh perhatian. Lihat DESIGN.md.            */
+@theme {
+  --font-sans: "Poppins", ui-sans-serif, system-ui, sans-serif;
+
+  --color-brand-950: #0d3313;
+  --color-brand-900: #14431c;
+  --color-brand-800: #1b5e20;
+  --color-brand-700: #2e7d32;
+  --color-brand-600: #3f8f43;
+  --color-brand-100: #dcecd9;
+  --color-brand-50: #f1f7ef;
+
+  --color-paper: #eef3ea;
+  --color-surface: #ffffff;
+  --color-ink: #18211a;
+  --color-muted: #51604f;
+  --color-line: #d9e3d3;
+
+  --color-alert: #8d5405;
+  --color-alert-50: #fdf4e4;
+  --color-danger: #a82a1f;
+  --color-danger-50: #fceded;
+
+  --radius-card: 0.875rem;
+  --radius-control: 0.625rem;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: var(--color-paper);
+    color: var(--color-ink);
+    font-size: 15px;
+    line-height: 1.55;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+
+  /* Kontrol harus terlihat bisa diklik (R-39). */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  a[href],
+  summary,
+  label[for],
+  select:not(:disabled) {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  [aria-disabled="true"],
+  select:disabled,
+  input:disabled {
+    cursor: not-allowed;
+  }
+
+  /* Fokus keyboard selalu terlihat, termasuk pada input yang memakai
+     `focus:outline-none`. Utility Tailwind memiliki spesifisitas lebih tinggi,
+     jadi cincin fokus diberi prioritas: indikator fokus tidak boleh hilang. */
+  :focus-visible {
+    outline: 2px solid var(--color-brand-700) !important;
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* Tombol dan tautan hanya memakai cincin, bukan garis luar ganda. */
+  a:focus-visible,
+  button:focus-visible,
+  [role="button"]:focus-visible {
+    outline-offset: 3px;
+  }
+
+  /* Angka poin disejajarkan supaya kolom tidak bergoyang. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Gerak non-esensial berhenti bila pengguna memintanya (R-39). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

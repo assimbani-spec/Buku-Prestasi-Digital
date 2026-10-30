@@ -3,37 +3,57 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { Suspense, lazy, useState, useEffect, useRef } from 'react';
 import Header from './components/Header';
 import BottomNav, { NavTab } from './components/BottomNav';
-import BorangKesehatanView from './components/BorangKesehatanView';
-import LaporanBulananOrtu from './components/LaporanBulananOrtu';
 import TambahSiswaModal from './components/TambahSiswaModal';
 import DetailSiswaModal from './components/DetailSiswaModal';
 import SignatureCanvas from 'react-signature-canvas';
+import type { UserProfile, StudentRecord, PrestasiRecord } from './lib/firebase';
+import {
+  isLocalBackend,
+  resetLocalData,
+  signInWithEmail,
+  signOutUser,
+  watchAuthUser,
+  type AppUser,
+} from './lib/auth';
+import { LOCAL_SEED_PASSWORD, ensureLocalSeed } from './lib/data/seed';
 import { 
-  auth, 
-  db, 
-  loginWithGoogle, 
-  logoutUser, 
-  UserProfile, 
-  StudentRecord,
-  UserRole
-} from './lib/firebase';
-import { 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword, 
-  onAuthStateChanged,
-  User as FirebaseUser
-} from 'firebase/auth';
-import { 
+  db,
   doc, 
   getDoc, 
   setDoc, 
+  addDoc,
+  increment,
+  query,
+  orderBy,
+  limit,
+  where,
+  serverTimestamp,
   collection, 
-  getDocs,
+  writeBatch,
   onSnapshot
-} from 'firebase/firestore';
+} from './lib/data';
+import { 
+  AppRoute,
+  Role,
+  routeForRole,
+  roleLabel,
+  isStaffRole,
+  canVerifyPrestasi,
+  canCreateStudent,
+  canSeeAllStudents,
+  profileStudentId,
+  profileChildIds,
+  profileRayonId
+} from './lib/rbac';
+import { logAuditSafe, newAuditRef, buildAuditPayload } from './lib/audit';
+
+// Panel admin dan laporan (membawa recharts) hanya dimuat saat dibutuhkan,
+// supaya siswa dan guru tidak mengunduh kode yang tidak mereka pakai.
+const AdminPanel = lazy(() => import('./components/AdminPanel'));
+const LaporanBulananOrtu = lazy(() => import('./components/LaporanBulananOrtu'));
 import { 
   BookOpen, 
   Lock, 
@@ -43,6 +63,7 @@ import {
   ArrowRight, 
   CheckCircle2, 
   AlertCircle,
+  X,
   Calendar,
   CheckSquare,
   Square,
@@ -79,11 +100,65 @@ import {
   BarChart3
 } from 'lucide-react';
 
-type AppRoute = 'login' | 'siswa' | 'ortu' | 'guru';
+type StudentRow = {
+  id: string;
+  name: string;
+  nisn: string;
+  kelas: string;
+  rayon: string;
+  points: number;
+  studentEmail?: string;
+  waliEmail?: string;
+};
+
+/** Penanda saat potongan halaman sedang diunduh. */
+function MemuatPanel({ label }: { label: string }) {
+  return (
+    <div className="flex items-center justify-center gap-2 px-4 py-10 text-xs text-muted">
+      <span
+        className="h-4 w-4 animate-spin rounded-full border-2 border-line border-t-brand-700"
+        aria-hidden="true"
+      />
+      Memuat {label}
+    </div>
+  );
+}
+
+/**
+ * Modul yang belum punya penyimpanan data. Ditampilkan apa adanya supaya
+ * tidak ada formulir yang seolah menyimpan padahal tidak.
+ */
+function ModulBelumTersedia({ judul }: { judul: string }) {
+  return (
+    <section className="rounded-card border border-line bg-surface px-4 py-8 text-center">
+      <h2 className="text-sm font-semibold text-ink">{judul}</h2>
+      <p className="mx-auto mt-1.5 max-w-md text-xs leading-relaxed text-muted">
+        Modul ini belum tersambung ke database, sehingga isian belum bisa disimpan dan
+        belum ditampilkan. Data yang Anda lihat sebelumnya adalah contoh tampilan.
+      </p>
+    </section>
+  );
+}
+
+// Inisial nama sebagai penanda identitas. Tidak memakai foto/avatar buatan.
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+// Nomor pekan ISO-8601 (Senin sebagai awal pekan), dipakai sebagai kunci rekap mingguan.
+function isoWeekNumber(date: Date): number {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+}
 
 export default function App() {
   const [currentRoute, setCurrentRoute] = useState<AppRoute>('login');
-  const [deviceView, setDeviceView] = useState<'mobile' | 'desktop'>('mobile');
 
   // Login form state
   const [email, setEmail] = useState('');
@@ -95,7 +170,7 @@ export default function App() {
   // Tab State for Mobile Roles
   const [siswaTab, setSiswaTab] = useState<NavTab>('jurnal');
   const [ortuTab, setOrtuTab] = useState<NavTab>('home');
-  const [guruTab, setGuruTab] = useState<'dashboard' | 'input_poin' | 'kesehatan' | 'siswa'>('dashboard');
+  const [guruTab, setGuruTab] = useState<'dashboard' | 'input_poin' | 'verifikasi' | 'kesehatan' | 'siswa'>('dashboard');
 
   // Siswa State
   const [siswaDate, setSiswaDate] = useState(new Date().toISOString().split('T')[0]);
@@ -154,6 +229,7 @@ export default function App() {
   // State Interaktif Kegiatan Non-Rutin (3-Mingguan, 9-Mingguan, Semester - Sesuai BKP Hal 20-22)
   const [nonRutinFilter, setNonRutinFilter] = useState<'Semua' | '3 Mingguan' | '9 Mingguan' | 'Semester'>('Semua');
   const [nonRutinSaveSuccess, setNonRutinSaveSuccess] = useState(false);
+  const [nonRutinSaving, setNonRutinSaving] = useState(false);
   const [nonRutinList, setNonRutinList] = useState([
     {
       id: 'nr-1',
@@ -340,14 +416,34 @@ export default function App() {
         { label: 'Tidak mengikuti alpa (-150 Pts / K 5.9)', status: 'Tidak mengikuti alpa', poin: -150 }
       ]
     }
-  ]);
+    // Daftar di atas adalah kriteria resmi BKP, bukan isian siswa. Status dan
+    // saksi sengaja dikosongkan sampai siswa benar-benar memilih.
+  ].map((item) => ({ ...item, status: '', poin: 0, saksi: '' })));
 
-  // Data Prestasi Santri Sesuai Halaman 114
-  const [prestasiSiswa, setPrestasiSiswa] = useState([
-    { id: '1', judul: 'Juara 1 Lomba Tahfidz Al-Quran 5 Juz Tingkat Kabupaten Pekalongan', kategori: 'Prestasi Kejuaraan', tingkat: 'Kabupaten', capaian: 'Juara 1', poin: 1000, tanggal: '15 Okt 2026', pembina: 'Ustadz Abdullah, Lc.' },
-    { id: '2', judul: 'Santri Teladan Sholat Berjamaah & Kedisiplinan Rayon Simbang', kategori: 'Duta Karakter', tingkat: 'Sekolah', capaian: 'Teladan 1', poin: 300, tanggal: '22 Okt 2026', pembina: 'Ustadz Hendra Gunawan, S.Pd.I' },
-    { id: '3', judul: 'Inisiator Pilah Sampah & Bank Daur Ulang Assimbani', kategori: 'Peduli Lingkungan', tingkat: 'Kecamatan', capaian: 'Pelopor', poin: 150, tanggal: '26 Okt 2026', pembina: 'Wali Rayon' },
-  ]);
+  // Prestasi dimuat dari Firestore (collection "prestasi"):
+  // siswa mengajukan (status pending, poin 0) → staf memverifikasi.
+  const [prestasiList, setPrestasiList] = useState<(PrestasiRecord & { createdAtMs?: number })[]>([]);
+  const [prestasiForm, setPrestasiForm] = useState({
+    judul: '',
+    kategori: 'Prestasi Kejuaraan',
+    tingkat: 'Sekolah',
+    capaian: '',
+    tanggal: new Date().toISOString().split('T')[0],
+    deskripsi: '',
+  });
+  const [prestasiSubmitting, setPrestasiSubmitting] = useState(false);
+  const [prestasiMsg, setPrestasiMsg] = useState<string | null>(null);
+  const [showFormPrestasi, setShowFormPrestasi] = useState(false);
+
+  // Verifikasi prestasi oleh staf (guru / pembimbing rayon / admin)
+  const [verifyPoin, setVerifyPoin] = useState<Record<string, number>>({});
+  const [verifyCatatan, setVerifyCatatan] = useState<Record<string, string>>({});
+  const [verifyingId, setVerifyingId] = useState<string | null>(null);
+
+  // Master data & audit log (dipakai panel admin)
+  const [masterKategori, setMasterKategori] = useState<
+    { kode: string; tipe: 'apresiasi' | 'konsekuensi'; kategori: string; deskripsi: string; poin: number }[]
+  >([]);
 
   // Ortu State
   const sigCanvasRef = useRef<SignatureCanvas | null>(null);
@@ -356,25 +452,16 @@ export default function App() {
   const [ttdLoading, setTtdLoading] = useState(false);
 
   // Guru State
-  const [selectedStudentId, setSelectedStudentId] = useState('1');
+  const [selectedStudentId, setSelectedStudentId] = useState('');
   const [selectedKode, setSelectedKode] = useState('A1.1');
   const [guruDeskripsi, setGuruDeskripsi] = useState('Sholat berjamaah tepat waktu 5 waktu berturut-turut di masjid');
   const [guruSuccess, setGuruSuccess] = useState(false);
   const [studentSearch, setStudentSearch] = useState('');
 
-  // Dummy Students Database
-  const [students, setStudents] = useState([
-    { id: '1', name: 'Muhammad Faiz Assimbani', kelas: 'X TKJ 1', rayon: 'Simbang 2', points: 1250 },
-    { id: '2', name: 'Aisyah Nurul Qulub', kelas: 'XI Keperawatan B', rayon: 'Siti Khadijah 2', points: 980 },
-    { id: '3', name: 'Zaidan Al-Farisi', kelas: 'X Farmasi A', rayon: 'Assimbani 1', points: 1100 },
-    { id: '4', name: 'Fatimah Az-Zahra', kelas: 'XI Keperawatan A', rayon: 'Siti Khadijah 1', points: 1050 },
-    { id: '5', name: 'Rizky Pratama', kelas: 'XII Farmasi Industri', rayon: 'Ibnu Sina', points: 880 },
-    { id: '6', name: 'Nabila Syahrani', kelas: 'X Keperawatan B', rayon: 'Siti Aisyah 1', points: 1180 },
-    { id: '7', name: 'Ahmad Daniyal', kelas: 'X Farmasi B', rayon: 'Assimbani 2', points: 1020 },
-    { id: '8', name: 'Zahra Amelia', kelas: 'XI Farmasi A', rayon: 'Siti Khadijah 2', points: 990 },
-    { id: '9', name: 'Ihsan Kamil', kelas: 'XII Keperawatan', rayon: 'Assimbani 1', points: 1250 },
-    { id: '10', name: 'Salma Salsabila', kelas: 'X Farmasi A', rayon: 'Siti Aisyah 2', points: 1140 },
-  ]);
+  // Daftar santri dimuat dari Firestore (collection "students"),
+  // sudah terbatas rayon/anak sendiri sesuai peran.
+  const [students, setStudents] = useState<StudentRow[]>([]);
+  const [showTambahSiswa, setShowTambahSiswa] = useState(false);
 
   // Master Kode BKP Lengkap
   const masterKodes = [
@@ -415,16 +502,393 @@ export default function App() {
     { kode: 'K 5.9', tipe: 'konsekuensi', kategori: 'Kesehatan', deskripsi: 'Tidak mengikuti Pemeriksaan Kesehatan / Asesmen', poin: 150 },
   ];
 
-  // Point History
-  const [poinLogs, setPoinLogs] = useState([
-    { id: '1', studentId: '1', kode: 'A 1.14', tipe: 'apresiasi', deskripsi: 'Muhammad Faiz: Melaksanakan sholat Tahajud & Dhuha rutin 1 pekan', poin: 300, time: 'Hari ini, 05:40' },
-    { id: '2', studentId: '1', kode: 'A 4.7', tipe: 'apresiasi', deskripsi: 'Muhammad Faiz: Tidur sebelum pukul 22.00 dan minum air putih 2L', poin: 100, time: 'Kemarin, 21:50' },
-    { id: '3', studentId: '1', kode: 'K 4.18', tipe: 'konsekuensi', deskripsi: 'Muhammad Faiz: Kopyah tertinggal di asrama saat apel pagi', poin: 150, time: '27 Okt, 07:15' },
-    { id: '4', studentId: '2', kode: 'A 1.17', tipe: 'apresiasi', deskripsi: 'Aisyah: Target hafalan Alquran 9 minggu tercapai mutqin', poin: 500, time: '26 Okt, 15:00' },
-  ]);
+  // Riwayat poin dimuat dari Firestore (collection "poin_log")
+  const [poinLogs, setPoinLogs] = useState<{
+    id: string;
+    studentId: string;
+    kode: string;
+    tipe: string;
+    deskripsi: string;
+    poin: number;
+    createdMs: number;
+    time: string;
+  }[]>([]);
 
-  const handleLogin = (customEmail?: string, customPass?: string) => {
-    const e = customEmail || email;
+  // Pemberitahuan resmi untuk akun ini (collection "notifikasi").
+  const [notifikasiList, setNotifikasiList] = useState<{
+    id: string;
+    judul: string;
+    isi: string;
+    createdMs: number;
+    time: string;
+  }[]>([]);
+
+  // ── Sesi & Profil (Firebase Auth + Firestore "profiles") ──────────
+  const [sessionUser, setSessionUser] = useState<AppUser | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [profileWarning, setProfileWarning] = useState<string | null>(null);
+
+  const role = (profile?.role ?? null) as Role | null;
+  const myStudentId = profileStudentId(profile);
+  const myChildIds = profileChildIds(profile);
+  const myRayonId = profileRayonId(profile);
+  const accountEmail = (sessionUser?.email ?? '').toLowerCase();
+
+  const loadProfileAndRoute = async (user: AppUser) => {
+    const ref = doc(db, 'profiles', user.uid);
+    let snap = await getDoc(ref);
+    if (!snap.exists()) {
+      // Profil belum ada: dibuat dengan hak paling rendah (siswa).
+      // Role dinaikkan oleh admin (panel admin / Firebase Console).
+      await setDoc(ref, {
+        uid: user.uid,
+        email: user.email ?? '',
+        fullName: user.displayName || (user.email ?? '').split('@')[0],
+        role: 'siswa',
+        total_poin: 1000,
+        createdAt: new Date().toISOString(),
+      });
+      snap = await getDoc(ref);
+    }
+    const data = snap.data() as UserProfile;
+    setProfile(data);
+
+    // Peringatan penautan agar admin tahu profil mana yang belum lengkap.
+    const warnings: string[] = [];
+    if (data.role === 'siswa' && !profileStudentId(data)) {
+      warnings.push('Profil siswa belum memiliki studentId (tidak tertaut ke master santri).');
+    }
+    if (data.role === 'orang_tua' && profileChildIds(data).length === 0) {
+      warnings.push('Profil orang tua belum memiliki childIds (belum ada anak yang tertaut).');
+    }
+    if (data.role === 'pembimbing_rayon' && !profileRayonId(data)) {
+      warnings.push('Profil pembimbing rayon belum memiliki rayonId.');
+    }
+    setProfileWarning(warnings.length ? warnings.join(' ') : null);
+
+    const route = routeForRole(data.role);
+    setCurrentRoute(route);
+  };
+
+  useEffect(() => {
+    let stopped = false;
+    let unsub: (() => void) | undefined;
+
+    // Mode lokal: data contoh dibuat sekali sebelum sesi dipulihkan.
+    ensureLocalSeed()
+      .catch(() => {
+        /* kegagalan seed tidak mengunci layar; galat muncul saat baca data */
+      })
+      .then(() => {
+        if (stopped) return;
+        unsub = watchAuthUser(async (user) => {
+          setSessionUser(user);
+          if (user) {
+            try {
+              await loadProfileAndRoute(user);
+              setErrorMsg(null);
+            } catch (err) {
+              setErrorMsg(
+                'Gagal memuat profil pengguna: ' + (err instanceof Error ? err.message : String(err))
+              );
+              setCurrentRoute('login');
+            }
+          } else {
+            setProfile(null);
+            setCurrentRoute('login');
+          }
+          setAuthReady(true);
+        });
+      });
+
+    return () => {
+      stopped = true;
+      unsub?.();
+    };
+  }, []);
+
+  // ═══════════════════════════════════════════════════════════════
+  // Query bertingkat sesuai peran.
+  // Rules baru membatasi dokumen per peran, jadi setiap query WAJIB
+  // memakai filter yang sejalan dengan rules (kalau tidak, Firestore
+  // menolak permintaan dengan "Missing or insufficient permissions").
+  // ═══════════════════════════════════════════════════════════════
+  const mapStudentDoc = (id: string, data: any): StudentRow => ({
+    id,
+    name: data.name ?? '(tanpa nama)',
+    nisn: data.nisn ?? '',
+    kelas: data.kelas ?? '-',
+    rayon: data.rayon ?? '-',
+    points: Number(data.points) || 0,
+    studentEmail: data.studentEmail ?? data.email ?? '',
+    waliEmail: data.waliEmail ?? '',
+  });
+
+  // Daftar santri real-time (terbatas peran)
+  useEffect(() => {
+    if (!sessionUser || !profile) {
+      setStudents([]);
+      return;
+    }
+
+    const subs: Array<() => void> = [];
+    const applyDocs = (docs: { id: string; data: () => any }[]) =>
+      setStudents(docs.map((d) => mapStudentDoc(d.id, d.data())));
+    const onErr = (label: string) => (err: Error) =>
+      setErrorMsg(`${label}: ${err.message}`);
+
+    if (canSeeAllStudents(role)) {
+      // Guru & admin: seluruh koleksi.
+      subs.push(
+        onSnapshot(
+          collection(db, 'students'),
+          (snap) => applyDocs(snap.docs),
+          onErr('Gagal memuat daftar santri')
+        )
+      );
+    } else if (role === 'pembimbing_rayon') {
+      if (!myRayonId) {
+        setStudents([]);
+      } else {
+        subs.push(
+          onSnapshot(
+            query(collection(db, 'students'), where('rayon', '==', myRayonId)),
+            (snap) => applyDocs(snap.docs),
+            onErr('Gagal memuat santri rayon')
+          )
+        );
+      }
+    } else if (role === 'siswa') {
+      if (myStudentId) {
+        subs.push(
+          onSnapshot(
+            doc(db, 'students', myStudentId),
+            (snap) => setStudents(snap.exists() ? [mapStudentDoc(snap.id, snap.data())] : []),
+            onErr('Gagal memuat data santri')
+          )
+        );
+      } else if (accountEmail) {
+        subs.push(
+          onSnapshot(
+            query(collection(db, 'students'), where('studentEmail', '==', accountEmail)),
+            (snap) => applyDocs(snap.docs),
+            onErr('Gagal memuat data santri')
+          )
+        );
+      } else {
+        setStudents([]);
+      }
+    } else if (role === 'orang_tua') {
+      if (myChildIds.length > 0) {
+        const buffer: Record<string, StudentRow> = {};
+        myChildIds.forEach((childId) => {
+          subs.push(
+            onSnapshot(
+              doc(db, 'students', childId),
+              (snap) => {
+                if (snap.exists()) buffer[childId] = mapStudentDoc(snap.id, snap.data());
+                else delete buffer[childId];
+                setStudents(Object.values(buffer));
+              },
+              onErr('Gagal memuat data anak')
+            )
+          );
+        });
+      } else if (accountEmail) {
+        subs.push(
+          onSnapshot(
+            query(collection(db, 'students'), where('waliEmail', '==', accountEmail)),
+            (snap) => applyDocs(snap.docs),
+            onErr('Gagal memuat data anak')
+          )
+        );
+      } else {
+        setStudents([]);
+      }
+    }
+
+    return () => subs.forEach((unsub) => unsub());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionUser, profile, role, myStudentId, myRayonId, accountEmail, myChildIds.join('|')]);
+
+  // Riwayat poin real-time (terbatas peran)
+  useEffect(() => {
+    if (!sessionUser || !profile) {
+      setPoinLogs([]);
+      return;
+    }
+
+    const toRow = (d: { id: string; data: () => any }) => {
+      const data = d.data() as any;
+      const createdMs: number = data.createdAt?.toMillis ? data.createdAt.toMillis() : 0;
+      return {
+        id: d.id,
+        studentId: data.siswa_id ?? '',
+        kode: data.kode ?? '',
+        tipe: data.tipe ?? 'apresiasi',
+        deskripsi: data.deskripsi ?? '',
+        poin: Number(data.poin) || 0,
+        createdMs,
+        time: createdMs ? new Date(createdMs).toLocaleString('id-ID') : 'Baru saja',
+      };
+    };
+
+    let logsQuery: ReturnType<typeof query> | null = null;
+    if (canSeeAllStudents(role)) {
+      logsQuery = query(collection(db, 'poin_log'), orderBy('createdAt', 'desc'), limit(50));
+    } else if (role === 'pembimbing_rayon' && myRayonId) {
+      logsQuery = query(collection(db, 'poin_log'), where('rayon', '==', myRayonId));
+    } else if (role === 'siswa' && myStudentId) {
+      logsQuery = query(collection(db, 'poin_log'), where('siswa_id', '==', myStudentId));
+    } else if (role === 'orang_tua' && myChildIds.length > 0) {
+      logsQuery = query(
+        collection(db, 'poin_log'),
+        where('siswa_id', 'in', myChildIds.slice(0, 10))
+      );
+    }
+
+    if (!logsQuery) {
+      setPoinLogs([]);
+      return;
+    }
+
+    const unsub = onSnapshot(
+      logsQuery,
+      (snap) => {
+        const rows = snap.docs.map(toRow).sort((a, b) => b.createdMs - a.createdMs);
+        setPoinLogs(rows.slice(0, 50));
+      },
+      (err) => setErrorMsg('Gagal memuat riwayat poin: ' + err.message)
+    );
+    return () => unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionUser, profile, role, myStudentId, myRayonId, myChildIds.join('|')]);
+
+  // Prestasi real-time (terbatas peran)
+  useEffect(() => {
+    if (!sessionUser || !profile) {
+      setPrestasiList([]);
+      return;
+    }
+
+    let prestasiQuery: ReturnType<typeof query> | null = null;
+    if (canSeeAllStudents(role)) {
+      prestasiQuery = query(collection(db, 'prestasi'));
+    } else if (role === 'pembimbing_rayon' && myRayonId) {
+      prestasiQuery = query(collection(db, 'prestasi'), where('rayon', '==', myRayonId));
+    } else if (role === 'siswa') {
+      prestasiQuery = query(
+        collection(db, 'prestasi'),
+        where('siswa_id', '==', myStudentId || '__tidak_tertaut__')
+      );
+    } else if (role === 'orang_tua' && myChildIds.length > 0) {
+      prestasiQuery = query(
+        collection(db, 'prestasi'),
+        where('siswa_id', 'in', myChildIds.slice(0, 10))
+      );
+    }
+
+    if (!prestasiQuery) {
+      setPrestasiList([]);
+      return;
+    }
+
+    const unsub = onSnapshot(
+      prestasiQuery,
+      (snap) => {
+        const rows = snap.docs.map((d) => {
+          const data = d.data() as any;
+          return {
+            id: d.id,
+            siswa_id: data.siswa_id ?? '',
+            rayon: data.rayon ?? '',
+            judul: data.judul ?? '',
+            kategori: data.kategori ?? '',
+            tingkat: data.tingkat ?? '',
+            capaian: data.capaian ?? '',
+            tanggal: data.tanggal ?? '',
+            deskripsi: data.deskripsi ?? '',
+            status: data.status ?? 'pending',
+            poin: Number(data.poin) || 0,
+            createdBy: data.createdBy ?? '',
+            verifiedBy: data.verifiedBy ?? '',
+            catatan_verifikasi: data.catatan_verifikasi ?? '',
+            createdAtMs: data.createdAt?.toMillis ? data.createdAt.toMillis() : 0,
+          } as PrestasiRecord & { createdAtMs: number };
+        });
+        setPrestasiList(rows.sort((a, b) => (b.createdAtMs ?? 0) - (a.createdAtMs ?? 0)));
+      },
+      (err) => setErrorMsg('Gagal memuat data prestasi: ' + err.message)
+    );
+    return () => unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionUser, profile, role, myStudentId, myRayonId, myChildIds.join('|')]);
+
+  // Pemberitahuan: rules hanya mengizinkan dokumen milik akun sendiri.
+  useEffect(() => {
+    if (!sessionUser) {
+      setNotifikasiList([]);
+      return;
+    }
+
+    const notifQuery = query(
+      collection(db, 'notifikasi'),
+      where('user_id', '==', sessionUser.uid)
+    );
+
+    const unsub = onSnapshot(
+      notifQuery,
+      (snap) => {
+        const rows = snap.docs
+          .map((d) => {
+            const data = d.data() as any;
+            const createdMs: number = data.createdAt?.toMillis ? data.createdAt.toMillis() : 0;
+            return {
+              id: d.id,
+              judul: data.judul ?? 'Pemberitahuan',
+              isi: data.isi ?? '',
+              createdMs,
+              time: createdMs ? new Date(createdMs).toLocaleString('id-ID') : '',
+            };
+          })
+          .sort((a, b) => b.createdMs - a.createdMs);
+        setNotifikasiList(rows);
+      },
+      (err) => setErrorMsg('Gagal memuat pemberitahuan: ' + err.message)
+    );
+    return () => unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionUser]);
+
+  // Master kategori poin: dipakai form guru (fallback ke daftar bawaan)
+  useEffect(() => {
+    if (!sessionUser) {
+      setMasterKategori([]);
+      return;
+    }
+    const unsub = onSnapshot(
+      collection(db, 'master_kategori_poin'),
+      (snap) => {
+        const rows = snap.docs.map((d) => {
+          const data = d.data() as any;
+          return {
+            kode: data.kode ?? d.id,
+            tipe: data.tipe === 'konsekuensi' ? 'konsekuensi' : 'apresiasi',
+            kategori: data.kategori ?? '-',
+            deskripsi: data.deskripsi ?? '',
+            poin: Number(data.poin) || 0,
+          } as { kode: string; tipe: 'apresiasi' | 'konsekuensi'; kategori: string; deskripsi: string; poin: number };
+        });
+        setMasterKategori(rows);
+      },
+      () => setMasterKategori([])
+    );
+    return () => unsub();
+  }, [sessionUser]);
+
+  const handleLogin = async (customEmail?: string, customPass?: string) => {
+    const e = (customEmail || email).trim();
     const p = customPass || password;
 
     if (!e || !p) {
@@ -435,28 +899,140 @@ export default function App() {
     setLoginLoading(true);
     setErrorMsg(null);
 
-    setTimeout(() => {
-      setLoginLoading(false);
-      if (e.includes('ortu')) {
-        setCurrentRoute('ortu');
-        setDeviceView('mobile');
-      } else if (e.includes('guru') || e.includes('bk')) {
-        setCurrentRoute('guru');
-        setDeviceView('desktop');
+    try {
+      await signInWithEmail(e, p);
+      // Routing dilakukan oleh watchAuthUser -> loadProfileAndRoute
+      setPassword('');
+    } catch (err: any) {
+      const code = String(err?.code ?? '');
+      if (code.includes('invalid-credential') || code.includes('wrong-password') || code.includes('user-not-found')) {
+        setErrorMsg('Email atau kata sandi salah.');
+      } else if (!code && err instanceof Error) {
+        // Galat mode lokal sudah berbahasa Indonesia dan aman ditampilkan.
+        setErrorMsg(err.message);
+      } else if (code.includes('too-many-requests')) {
+        setErrorMsg('Terlalu banyak percobaan masuk. Coba lagi beberapa saat.');
+      } else if (code.includes('network')) {
+        setErrorMsg('Tidak dapat menghubungi server autentikasi. Periksa koneksi internet.');
       } else {
-        setCurrentRoute('siswa');
-        setDeviceView('mobile');
+        setErrorMsg('Gagal masuk: ' + (err?.message ?? String(err)));
       }
-    }, 400);
+    } finally {
+      setLoginLoading(false);
+    }
   };
 
-  const handleLogout = () => {
+  const handleResetLocal = async () => {
+    try {
+      await resetLocalData();
+      setEmail('');
+      setPassword('');
+      setErrorMsg(null);
+    } catch (err) {
+      setErrorMsg('Gagal menghapus data lokal: ' + (err instanceof Error ? err.message : String(err)));
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOutUser();
+    } catch {
+      /* diabaikan: sesi lokal tetap dibersihkan di bawah */
+    }
     setCurrentRoute('login');
     setEmail('');
     setPassword('');
+    setProfile(null);
   };
 
-  const currentStudent = students.find((s) => s.id === selectedStudentId) || students[0];
+  // Santri milik akun yang sedang masuk (untuk role siswa / orang tua)
+  const ownStudent =
+    students.find((s) => s.studentEmail && s.studentEmail.toLowerCase() === accountEmail) ||
+    students.find((s) => s.waliEmail && s.waliEmail.toLowerCase() === accountEmail);
+
+  const currentStudent =
+    (currentRoute === 'siswa' || currentRoute === 'ortu') && ownStudent
+      ? ownStudent
+      : students.find((s) => s.id === selectedStudentId) ||
+        ownStudent ||
+        students[0] || {
+          id: '',
+          name: profile?.fullName || 'Santri',
+          nisn: profile?.nisn || '-',
+          kelas: profile?.kelas || '-',
+          rayon: myRayonId || '-',
+          points: profile?.total_poin ?? 0,
+        };
+
+  // Muat isian non-rutin yang sudah tersimpan pada pekan ini (bila ada).
+  useEffect(() => {
+    const studentId = currentStudent.id;
+    if (!studentId || role !== 'siswa') return;
+
+    const periodeKey = `${new Date().getFullYear()}_P${isoWeekNumber(new Date())}`;
+    let cancelled = false;
+
+    getDoc(doc(db, 'pembiasaan_non_rutin', `${studentId}_${periodeKey}`))
+      .then((snap) => {
+        if (cancelled || !snap.exists()) return;
+        const data = snap.data() as any;
+        if (!Array.isArray(data.items)) return;
+        setNonRutinList((prev) =>
+          prev.map((item) => {
+            const saved = data.items.find((s: any) => s.id === item.id);
+            if (!saved) return item;
+            return {
+              ...item,
+              status: typeof saved.status === 'string' ? saved.status : '',
+              poin: Number(saved.poin) || 0,
+              saksi: typeof saved.saksi === 'string' ? saved.saksi : '',
+              detail: typeof saved.detail === 'string' ? saved.detail : '',
+            };
+          })
+        );
+      })
+      .catch(() => {
+        // Dokumen belum ada atau akun belum berhak: mulai dari isian kosong.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentStudent.id, role]);
+
+  // Master kode dari Firestore (dikelola admin) menimpa daftar bawaan.
+  const effectiveKodes = masterKategori.length > 0 ? masterKategori : masterKodes;
+
+  // Identitas pelaku untuk audit log.
+  const auditActor = sessionUser
+    ? { uid: sessionUser.uid, email: sessionUser.email, role }
+    : null;
+
+  const pendingPrestasi = prestasiList.filter((p) => p.status === 'pending');
+
+  // Angka yang ditampilkan ke wali santri: semua dihitung dari data tersimpan.
+  const currentWeek = isoWeekNumber(new Date());
+  const targetPoin = 1000;
+  const progressPct = Math.max(
+    0,
+    Math.min(100, Math.round((currentStudent.points / targetPoin) * 100))
+  );
+  // Riwayat milik santri yang sedang dilihat (wali dengan banyak anak tetap terpisah).
+  const studentPoinLogs = currentStudent.id
+    ? poinLogs.filter((l) => l.studentId === currentStudent.id)
+    : poinLogs;
+  const lastKonsekuensi = studentPoinLogs.find((l) => l.tipe === 'konsekuensi');
+
+  // Ringkasan staf dihitung dari data nyata, bukan angka tetap.
+  const startOfTodayMs = new Date().setHours(0, 0, 0, 0);
+  const weekAgoMs = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const apresiasiHariIni = poinLogs
+    .filter((l) => l.tipe === 'apresiasi' && l.createdMs >= startOfTodayMs)
+    .reduce((acc, l) => acc + l.poin, 0);
+  const konsekuensiMingguIni = poinLogs.filter(
+    (l) => l.tipe === 'konsekuensi' && l.createdMs >= weekAgoMs
+  ).length;
 
   // Hitung Estimasi Poin Harian Otomatis
   const calculateDailyPoints = () => {
@@ -490,13 +1066,164 @@ export default function App() {
     return pts;
   };
 
-  const saveJurnal = () => {
+  const saveJurnal = async () => {
+    if (!sessionUser) {
+      setErrorMsg('Sesi berakhir. Silakan masuk kembali.');
+      return;
+    }
+    if (!currentStudent.id) {
+      setErrorMsg('Data santri belum tertaut ke akun ini. Hubungi Guru / BK.');
+      return;
+    }
+    if (role === 'siswa' && !myStudentId) {
+      setErrorMsg(
+        'Profil Anda belum memiliki studentId. Minta admin mengisi profiles/{uid}.studentId = ID dokumen santri, lalu masuk ulang.'
+      );
+      return;
+    }
+
     const dailyPts = calculateDailyPoints();
-    setStudents((prev) =>
-      prev.map((s) => (s.id === currentStudent.id ? { ...s, points: s.points + dailyPts } : s))
-    );
-    setSiswaSaveSuccess(true);
-    setTimeout(() => setSiswaSaveSuccess(false), 3000);
+    setSiswaSaveSuccess(false);
+    const jurnalId = `${sessionUser.uid}_${siswaDate}`;
+
+    const payload = {
+      siswa_id: sessionUser.uid,
+      student_id: currentStudent.id,
+      rayon: currentStudent.rayon,
+      tanggal: siswaDate,
+      tahajud: jurnal.tahajud,
+      dhuha: jurnal.dhuha,
+      subuh: jurnal.subuh,
+      dzuhur: jurnal.dzuhur,
+      ashar: jurnal.ashar,
+      maghrib: jurnal.maghrib,
+      isya: jurnal.isya,
+      mengaji: jurnal.mengaji,
+      zikir_pagi: jurnal.zikir_pagi,
+      zikir_sore: jurnal.zikir_sore,
+      bangun_subuh: jurnal.bangun_subuh,
+      tidur_awal: jurnal.tidur_awal,
+      air_putih: jurnal.air_putih,
+      mandi_2x: jurnal.mandi_2x,
+      grooming: jurnal.grooming,
+      kelompok_belajar: jurnal.kelompok_belajar,
+      sedang_menstruasi: jurnal.sedang_menstruasi,
+      catatan: jurnal.catatan,
+      poin_harian: dailyPts,
+      updatedAt: serverTimestamp(),
+    };
+
+    try {
+      // Jurnal, saldo poin, dan audit log ditulis atomik: kalau salah satu
+      // ditolak rules, seluruh operasi batal (tidak ada data separuh jadi).
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'pembiasaan_harian', jurnalId), payload);
+      batch.update(doc(db, 'students', currentStudent.id), {
+        points: increment(dailyPts),
+        lastJournalDate: siswaDate,
+        updatedAt: serverTimestamp(),
+      });
+      if (auditActor) {
+        batch.set(
+          newAuditRef(),
+          buildAuditPayload({
+            actor: auditActor,
+            action: 'jurnal_save',
+            collectionName: 'pembiasaan_harian',
+            docId: jurnalId,
+            siswaId: currentStudent.id,
+            rayon: currentStudent.rayon,
+            after: { tanggal: siswaDate, poin_harian: dailyPts },
+          })
+        );
+      }
+      await batch.commit();
+
+      setSiswaSaveSuccess(true);
+      setTimeout(() => setSiswaSaveSuccess(false), 3000);
+    } catch (err) {
+      setErrorMsg(
+        'Gagal menyimpan jurnal: ' + (err instanceof Error ? err.message : String(err))
+      );
+    }
+  };
+
+  // Isian kegiatan non-rutin disimpan per santri dan per pekan.
+  // Sebelum ini tombolnya hanya menampilkan pesan sukses tanpa menyimpan apa pun.
+  const saveNonRutin = async () => {
+    if (!sessionUser) {
+      setErrorMsg('Sesi berakhir. Silakan masuk kembali.');
+      return;
+    }
+    if (!currentStudent.id) {
+      setErrorMsg('Data santri belum tertaut ke akun ini. Hubungi Guru / BK.');
+      return;
+    }
+
+    const belumDiisi = nonRutinList.filter((item) => !item.status).length;
+    if (belumDiisi > 0) {
+      setErrorMsg(`Masih ada ${belumDiisi} kegiatan yang belum dipilih statusnya.`);
+      return;
+    }
+
+    const tahun = new Date().getFullYear();
+    const periodeKey = `${tahun}_P${currentWeek}`;
+    const docId = `${currentStudent.id}_${periodeKey}`;
+    const items = nonRutinList.map((item) => ({
+      id: item.id,
+      nama: item.nama,
+      kategori: item.kategori,
+      mapel: item.mapel,
+      status: item.status,
+      poin: item.poin,
+      saksi: item.saksi,
+      detail: item.detail,
+    }));
+    const totalPoin = items.reduce((acc, item) => acc + (item.poin > 0 ? item.poin : 0), 0);
+
+    setNonRutinSaving(true);
+    try {
+      const batch = writeBatch(db);
+      batch.set(
+        doc(db, 'pembiasaan_non_rutin', docId),
+        {
+          siswa_id: currentStudent.id,
+          rayon: currentStudent.rayon,
+          tahun,
+          pekan: currentWeek,
+          periode: periodeKey,
+          items,
+          total_poin: totalPoin,
+          dicatat_oleh: sessionUser.uid,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+      if (auditActor) {
+        batch.set(
+          newAuditRef(),
+          buildAuditPayload({
+            actor: auditActor,
+            action: 'non_rutin_save',
+            collectionName: 'pembiasaan_non_rutin',
+            docId,
+            siswaId: currentStudent.id,
+            rayon: currentStudent.rayon,
+            after: { periode: periodeKey, total_poin: totalPoin, jumlah_kegiatan: items.length },
+          })
+        );
+      }
+      await batch.commit();
+      setNonRutinSaveSuccess(true);
+      setTimeout(() => setNonRutinSaveSuccess(false), 3500);
+    } catch (err) {
+      setErrorMsg(
+        'Gagal menyimpan kegiatan non-rutin: ' +
+          (err instanceof Error ? err.message : String(err))
+      );
+    } finally {
+      setNonRutinSaving(false);
+    }
   };
 
   // Ortu Signature actions
@@ -507,113 +1234,317 @@ export default function App() {
     }
   };
 
-  const saveSig = () => {
+  const saveSig = async () => {
     if (!sigCanvasRef.current || sigCanvasRef.current.isEmpty()) {
       alert('Mohon bubuhkan tanda tangan Anda terlebih dahulu pada kanvas.');
       return;
     }
+    if (!sessionUser) {
+      setErrorMsg('Sesi berakhir. Silakan masuk kembali.');
+      return;
+    }
+
     setTtdLoading(true);
-    setTimeout(() => {
-      const url = sigCanvasRef.current?.getTrimmedCanvas().toDataURL('image/png') || '';
+    try {
+      const url = sigCanvasRef.current.getTrimmedCanvas().toDataURL('image/png');
       setTtdSavedUrl(url);
-      setTtdLoading(false);
+
+      if (currentStudent.id) {
+        const now = new Date();
+        const mingguKe = isoWeekNumber(now);
+        const rekapId = `${currentStudent.id}_${now.getFullYear()}_${mingguKe}`;
+        await setDoc(
+          doc(db, 'pembiasaan_mingguan', rekapId),
+          {
+            siswa_id: currentStudent.id,
+            rayon: currentStudent.rayon,
+            minggu_ke: mingguKe,
+            tahun: now.getFullYear(),
+            ttd_ortu: true,
+            // Data URL disimpan hanya jika wajar (<900 KB, batas dokumen Firestore 1 MB).
+            // Untuk produksi, unggah ke Firebase Storage dan simpan URL-nya saja.
+            ttd_url: url.length < 900_000 ? url : '',
+            dicatat_oleh: sessionUser.uid,
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+
+        if (auditActor) {
+          const warn = await logAuditSafe({
+            actor: auditActor,
+            action: 'ttd_ortu',
+            collectionName: 'pembiasaan_mingguan',
+            docId: rekapId,
+            siswaId: currentStudent.id,
+            rayon: currentStudent.rayon,
+            after: { minggu_ke: mingguKe, tahun: now.getFullYear(), ttd_ortu: true },
+          });
+          if (warn) setErrorMsg('TTD tersimpan, tetapi audit log gagal: ' + warn);
+        }
+      }
+
       setTtdSuccess(true);
       setTimeout(() => setTtdSuccess(false), 3500);
-    }, 500);
+    } catch (err) {
+      setErrorMsg(
+        'Gagal menyimpan tanda tangan: ' + (err instanceof Error ? err.message : String(err))
+      );
+    } finally {
+      setTtdLoading(false);
+    }
   };
 
   // Guru Point Submit
-  const handleGuruSubmit = (e: React.FormEvent) => {
+  const handleGuruSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const master = masterKodes.find((m) => m.kode === selectedKode);
+    const master = effectiveKodes.find((m) => m.kode === selectedKode);
     if (!master) return;
 
+    if (!sessionUser || !auditActor) {
+      setErrorMsg('Sesi berakhir. Silakan masuk kembali.');
+      return;
+    }
+    if (!isStaffRole(role)) {
+      setErrorMsg('Hanya guru, pembimbing rayon, atau admin yang dapat mencatat poin.');
+      return;
+    }
+
     const targetStudent = students.find((s) => s.id === selectedStudentId);
-    const isAp = master.tipe === 'apresiasi';
+    if (!targetStudent) {
+      setErrorMsg('Pilih santri terlebih dahulu sebelum menyimpan poin.');
+      return;
+    }
 
-    setStudents((prev) =>
-      prev.map((s) => {
-        if (s.id === selectedStudentId) {
-          const newPts = isAp ? s.points + master.poin : Math.max(0, s.points - master.poin);
-          return { ...s, points: newPts };
-        }
-        return s;
-      })
-    );
+    const deskripsi = `${targetStudent.name}: ${guruDeskripsi || master.deskripsi}`;
+    const delta = master.tipe === 'apresiasi' ? master.poin : -master.poin;
 
-    const newLog = {
-      id: String(Date.now()),
-      studentId: selectedStudentId,
-      kode: master.kode,
-      tipe: master.tipe,
-      deskripsi: `${targetStudent?.name}: ${guruDeskripsi || master.deskripsi}`,
-      poin: master.poin,
-      time: 'Baru saja',
-    };
-    setPoinLogs([newLog, ...poinLogs]);
+    try {
+      const batch = writeBatch(db);
+      const logRef = doc(collection(db, 'poin_log'));
 
-    setGuruSuccess(true);
-    setTimeout(() => setGuruSuccess(false), 3000);
+      batch.set(logRef, {
+        siswa_id: targetStudent.id,
+        rayon: targetStudent.rayon,
+        kode: master.kode,
+        tipe: master.tipe,
+        deskripsi,
+        poin: master.poin,
+        dicatat_oleh: sessionUser.uid,
+        createdAt: serverTimestamp(),
+      });
+
+      batch.update(doc(db, 'students', targetStudent.id), {
+        points: increment(delta),
+        updatedAt: serverTimestamp(),
+      });
+
+      batch.set(
+        newAuditRef(),
+        buildAuditPayload({
+          actor: auditActor,
+          action: 'poin_create',
+          collectionName: 'poin_log',
+          docId: logRef.id,
+          siswaId: targetStudent.id,
+          rayon: targetStudent.rayon,
+          after: { kode: master.kode, tipe: master.tipe, poin: master.poin, delta, deskripsi },
+        })
+      );
+
+      await batch.commit();
+
+      setGuruSuccess(true);
+      setTimeout(() => setGuruSuccess(false), 3000);
+    } catch (err) {
+      setErrorMsg(
+        'Gagal menyimpan poin: ' + (err instanceof Error ? err.message : String(err))
+      );
+    }
   };
 
-  return (
-    <div className="min-h-screen bg-[#E8F5E9] text-gray-900 font-sans flex flex-col">
-      
-      {/* TOPBAR SWITCHER BAR: Navigasi cepat antar peran */}
-      <div className="bg-[#1B5E20] text-white px-4 py-2 text-xs flex flex-wrap items-center justify-between border-b border-green-800 gap-2 shrink-0 z-40">
-        <div className="flex items-center gap-2">
-          <BookOpen className="w-4 h-4 text-green-300" />
-          <span className="font-bold tracking-tight">BKP Digital</span>
-          <span className="text-green-300 hidden sm:inline">• SMK Thibbil Qulub Assimbani</span>
+  // ── Alur pengajuan prestasi ─────────────────────────────────────
+  // Siswa mengirim pengajuan (status pending, poin 0). Field status/poin/
+  // verifiedBy tidak dikirim sama sekali, dan rules menolak jika dikirim.
+  const handleSubmitPrestasi = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!sessionUser || !auditActor) {
+      setErrorMsg('Sesi berakhir. Silakan masuk kembali.');
+      return;
+    }
+    if (!currentStudent.id) {
+      setErrorMsg('Data santri belum tertaut ke akun ini. Hubungi Guru / BK.');
+      return;
+    }
+    if (!prestasiForm.judul.trim() || !prestasiForm.capaian.trim()) {
+      setErrorMsg('Judul prestasi dan capaian wajib diisi.');
+      return;
+    }
+
+    setPrestasiSubmitting(true);
+    setPrestasiMsg(null);
+
+    const payload = {
+      siswa_id: currentStudent.id,
+      rayon: currentStudent.rayon,
+      judul: prestasiForm.judul.trim(),
+      kategori: prestasiForm.kategori,
+      tingkat: prestasiForm.tingkat,
+      capaian: prestasiForm.capaian.trim(),
+      tanggal: prestasiForm.tanggal,
+      deskripsi: prestasiForm.deskripsi.trim(),
+      status: 'pending' as const,
+      poin: 0,
+      createdBy: sessionUser.uid,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    };
+
+    try {
+      const ref = await addDoc(collection(db, 'prestasi'), payload);
+      const warn = await logAuditSafe({
+        actor: auditActor,
+        action: 'prestasi_submit',
+        collectionName: 'prestasi',
+        docId: ref.id,
+        siswaId: currentStudent.id,
+        rayon: currentStudent.rayon,
+        after: payload,
+      });
+      setPrestasiMsg(
+        warn
+          ? 'Prestasi tersimpan, tetapi audit log gagal: ' + warn
+          : 'Pengajuan prestasi terkirim. Menunggu verifikasi guru / pembimbing rayon.'
+      );
+      setPrestasiForm((prev) => ({ ...prev, judul: '', capaian: '', deskripsi: '' }));
+      setShowFormPrestasi(false);
+    } catch (err) {
+      setErrorMsg(
+        'Gagal mengirim pengajuan prestasi: ' +
+          (err instanceof Error ? err.message : String(err))
+      );
+    } finally {
+      setPrestasiSubmitting(false);
+    }
+  };
+
+  // ── Verifikasi prestasi (guru / pembimbing rayon / admin) ────────
+  const handleVerifyPrestasi = async (
+    pres: PrestasiRecord,
+    decision: 'verified' | 'rejected'
+  ) => {
+    if (!sessionUser || !auditActor) {
+      setErrorMsg('Sesi berakhir. Silakan masuk kembali.');
+      return;
+    }
+    if (!canVerifyPrestasi(role)) {
+      setErrorMsg('Hanya guru, pembimbing rayon, atau admin yang dapat memverifikasi.');
+      return;
+    }
+    if (pres.status !== 'pending') {
+      setErrorMsg('Pengajuan ini sudah diproses.');
+      return;
+    }
+
+    const poin = decision === 'verified' ? Number(verifyPoin[pres.id] ?? 100) : 0;
+    if (decision === 'verified' && (!Number.isFinite(poin) || poin <= 0 || poin > 5000)) {
+      setErrorMsg('Poin verifikasi harus berupa angka antara 1 dan 5000.');
+      return;
+    }
+
+    const catatan = verifyCatatan[pres.id] ?? '';
+    setVerifyingId(pres.id);
+
+    try {
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'prestasi', pres.id), {
+        status: decision,
+        poin,
+        verifiedBy: sessionUser.uid,
+        verifiedAt: serverTimestamp(),
+        catatan_verifikasi: catatan,
+        updatedAt: serverTimestamp(),
+      });
+
+      if (decision === 'verified' && poin > 0) {
+        batch.update(doc(db, 'students', pres.siswa_id), {
+          points: increment(poin),
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      batch.set(
+        newAuditRef(),
+        buildAuditPayload({
+          actor: auditActor,
+          action: decision === 'verified' ? 'prestasi_verify' : 'prestasi_reject',
+          collectionName: 'prestasi',
+          docId: pres.id,
+          siswaId: pres.siswa_id,
+          rayon: pres.rayon,
+          before: { status: pres.status, poin: pres.poin },
+          after: { status: decision, poin, catatan_verifikasi: catatan },
+        })
+      );
+
+      await batch.commit();
+    } catch (err) {
+      setErrorMsg(
+        'Gagal memverifikasi prestasi: ' + (err instanceof Error ? err.message : String(err))
+      );
+    } finally {
+      setVerifyingId(null);
+    }
+  };
+
+  // Tunggu Firebase Auth selesai memulihkan sesi sebelum menentukan halaman.
+  if (!authReady) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-paper">
+        <div className="text-center text-[#1B5E20] text-sm font-semibold">
+          <div className="w-8 h-8 border-4 border-green-200 border-t-[#2E7D32] rounded-full animate-spin mx-auto mb-3" />
+          Memuat BKP Digital…
         </div>
+      </div>
+    );
+  }
 
+  return (
+    <div className="flex min-h-screen flex-col bg-paper font-sans text-ink">
+
+      {/* Notifikasi error global (gagal simpan, gagal muat, dsb) */}
+      {errorMsg && currentRoute !== 'login' && (
+        <div
+          role="alert"
+          className="fixed left-1/2 top-3 z-50 flex w-[92%] max-w-md -translate-x-1/2 items-start gap-2 rounded-control border border-danger/40 bg-surface px-4 py-3 text-xs font-medium text-danger shadow-lg"
+        >
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+          <span className="flex-1">{errorMsg}</span>
+          <button
+            type="button"
+            onClick={() => setErrorMsg(null)}
+            aria-label="Tutup pesan kesalahan"
+            className="flex h-6 w-6 items-center justify-center rounded text-danger/80 hover:bg-danger-50"
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+      )}
+
+      {/* Peringatan penautan profil (studentId/childIds/rayonId belum diisi) */}
+      {profileWarning && currentRoute !== 'login' && (
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-40 max-w-md w-[92%] bg-amber-500 text-white text-xs font-semibold px-4 py-2.5 rounded-xl shadow-lg flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span className="flex-1">{profileWarning}</span>
+        </div>
+      )}
+
+      {/* TOPBAR: identitas aplikasi */}
+      <div className="z-40 flex shrink-0 items-center gap-2 border-b border-brand-950 bg-brand-900 px-4 py-2 text-xs text-white">
         <div className="flex items-center gap-2">
-          <span className="text-[11px] text-green-200 hidden md:inline">Pratinjau Peran:</span>
-          <div className="flex items-center bg-green-950/60 p-0.5 rounded-lg border border-green-700/50">
-            <button
-              onClick={() => { setCurrentRoute('login'); }}
-              className={`px-2 py-1 rounded text-[11px] font-semibold transition-all ${
-                currentRoute === 'login' ? 'bg-[#2E7D32] text-white' : 'text-green-200 hover:text-white'
-              }`}
-            >
-              Login
-            </button>
-            <button
-              onClick={() => { setCurrentRoute('siswa'); setDeviceView('mobile'); }}
-              className={`px-2 py-1 rounded text-[11px] font-semibold transition-all ${
-                currentRoute === 'siswa' ? 'bg-[#2E7D32] text-white' : 'text-green-200 hover:text-white'
-              }`}
-            >
-              Siswa
-            </button>
-            <button
-              onClick={() => { setCurrentRoute('ortu'); setDeviceView('mobile'); }}
-              className={`px-2 py-1 rounded text-[11px] font-semibold transition-all ${
-                currentRoute === 'ortu' ? 'bg-[#2E7D32] text-white' : 'text-green-200 hover:text-white'
-              }`}
-            >
-              Orang Tua
-            </button>
-            <button
-              onClick={() => { setCurrentRoute('guru'); setDeviceView('desktop'); }}
-              className={`px-2 py-1 rounded text-[11px] font-semibold transition-all ${
-                currentRoute === 'guru' ? 'bg-[#2E7D32] text-white' : 'text-green-200 hover:text-white'
-              }`}
-            >
-              Guru / BK
-            </button>
-          </div>
-
-          {/* Toggle Device Frame */}
-          {(currentRoute === 'siswa' || currentRoute === 'ortu') && (
-            <button
-              onClick={() => setDeviceView(deviceView === 'mobile' ? 'desktop' : 'mobile')}
-              className="p-1 rounded bg-green-800 text-green-200 hover:text-white transition-colors ml-1"
-              title="Toggle Mobile/Desktop view"
-            >
-              {deviceView === 'mobile' ? <Monitor className="w-3.5 h-3.5" /> : <Smartphone className="w-3.5 h-3.5" />}
-            </button>
-          )}
+          <BookOpen className="h-4 w-4 text-brand-100" aria-hidden="true" />
+          <span className="font-semibold tracking-tight">BKP Digital</span>
+          <span className="hidden text-brand-100 sm:inline">SMK Thibbil Qulub Assimbani</span>
         </div>
       </div>
 
@@ -621,119 +1552,151 @@ export default function App() {
       {/* 1. HALAMAN LOGIN                            */}
       {/* ═══════════════════════════════════════════ */}
       {currentRoute === 'login' && (
-        <div className="flex-1 flex flex-col justify-center items-center px-4 py-8">
-          <div className="w-full max-w-md bg-white rounded-2xl shadow-md border border-green-100 overflow-hidden">
-            <div className="bg-[#1B5E20] px-6 pt-8 pb-7 text-white text-center rounded-b-3xl shadow-sm">
-              <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-green-800 border-2 border-green-500/40 shadow-inner mb-2.5">
-                <BookOpen className="w-7 h-7 text-green-200" />
-              </div>
-              <h1 className="text-2xl font-bold tracking-tight">BKP Digital</h1>
-              <p className="text-xs text-green-200 mt-0.5">Sistem Buku Kejar Prestasi & Jurnal Pembiasaan</p>
-              <div className="inline-block mt-2 bg-green-800 px-3 py-0.5 rounded-full text-[10px] font-bold text-green-100">
-                SMK THIBBIL QULUB ASSIMBANI
-              </div>
-            </div>
-
-            <div className="p-6">
-              {errorMsg && (
-                <div className="mb-4 p-3 rounded-xl bg-red-50 border border-red-200 flex items-start gap-2 text-xs text-red-600">
-                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                  <span>{errorMsg}</span>
+        <main className="flex flex-1 flex-col items-center justify-center px-4 py-10">
+          <div className="w-full max-w-sm">
+            <div className="overflow-hidden rounded-card border border-line bg-surface">
+              <div className="bg-brand-800 px-6 py-6 text-white">
+                <div className="flex items-center gap-3">
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-control border border-white/20 bg-brand-950/40">
+                    <BookOpen className="h-5 w-5 text-brand-100" aria-hidden="true" />
+                  </span>
+                  <div>
+                    <h1 className="text-lg font-semibold leading-tight">BKP Digital</h1>
+                    <p className="text-xs text-brand-100">Buku Kejar Prestasi</p>
+                  </div>
                 </div>
-              )}
+                <p className="mt-4 text-xs leading-relaxed text-brand-100">
+                  SMK Thibbil Qulub Assimbani. Jurnal pembiasaan, poin karakter, dan pengesahan wali santri.
+                </p>
+              </div>
 
-              <form onSubmit={(e) => { e.preventDefault(); handleLogin(); }} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">Alamat Email</label>
-                  <div className="relative">
-                    <Mail className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
+              <div className="px-6 py-6">
+                {isLocalBackend && (
+                  <div className="mb-4 rounded-control border border-line bg-paper/60 px-3 py-2.5">
+                    <p className="text-xs font-semibold text-ink">Mode lokal</p>
+                    <p className="mt-1 text-xs leading-relaxed text-muted">
+                      Data tersimpan di peramban ini, bukan di server. Akun awal administrator:{' '}
+                      <span className="font-semibold text-ink">admin@lokal.test</span> dengan kata sandi{' '}
+                      <span className="font-semibold text-ink">{LOCAL_SEED_PASSWORD}</span>. Akun lain dibuat
+                      admin dari menu Pengguna.
+                    </p>
+                  </div>
+                )}
+
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    handleLogin();
+                  }}
+                  className="space-y-4"
+                  noValidate
+                >
+                  {errorMsg && (
+                    <div
+                      role="alert"
+                      className="flex items-start gap-2 rounded-control border border-danger/30 bg-danger-50 px-3 py-2.5 text-xs text-danger"
+                    >
+                      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                      <span>{errorMsg}</span>
+                    </div>
+                  )}
+
+                  <div>
+                    <label htmlFor="login-email" className="mb-1.5 block text-xs font-semibold text-ink">
+                      Email sekolah
+                    </label>
                     <input
+                      id="login-email"
+                      name="email"
                       type="email"
+                      inputMode="email"
+                      autoComplete="username"
+                      required
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      placeholder="contoh: siswa1@test.com"
-                      className="w-full pl-9 pr-3 py-2.5 text-xs bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:border-[#2E7D32] outline-none"
+                      placeholder="nama@thibbilqulub.sch.id"
+                      className="w-full rounded-control border border-line bg-paper/60 px-3 py-2.5 text-sm text-ink placeholder:text-muted/70 focus:bg-white focus:border-brand-700"
                     />
                   </div>
-                </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">Kata Sandi</label>
-                  <div className="relative">
-                    <Lock className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full pl-9 pr-9 py-2.5 text-xs bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:border-[#2E7D32] outline-none"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3 top-3 text-gray-400"
-                    >
-                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
+                  <div>
+                    <label htmlFor="login-password" className="mb-1.5 block text-xs font-semibold text-ink">
+                      Kata sandi
+                    </label>
+                    <div className="relative">
+                      <input
+                        id="login-password"
+                        name="password"
+                        type={showPassword ? 'text' : 'password'}
+                        autoComplete="current-password"
+                        required
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        className="w-full rounded-control border border-line bg-paper/60 py-2.5 pl-3 pr-11 text-sm text-ink focus:bg-white focus:border-brand-700"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        aria-label={showPassword ? 'Sembunyikan kata sandi' : 'Tampilkan kata sandi'}
+                        aria-pressed={showPassword}
+                        className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-muted hover:text-brand-800"
+                      >
+                        {showPassword ? (
+                          <EyeOff className="h-4 w-4" aria-hidden="true" />
+                        ) : (
+                          <Eye className="h-4 w-4" aria-hidden="true" />
+                        )}
+                      </button>
+                    </div>
                   </div>
-                </div>
 
-                <button
-                  type="submit"
-                  disabled={loginLoading}
-                  className="w-full py-3 bg-[#2E7D32] hover:bg-[#1B5E20] text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2"
-                >
-                  {loginLoading ? (
-                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  ) : (
-                    <>
-                      <span>Masuk ke Akun</span>
-                      <ArrowRight className="w-4 h-4" />
-                    </>
-                  )}
-                </button>
-              </form>
-
-              {/* 1-Klik Masuk Demo Preset */}
-              <div className="mt-5 pt-4 border-t border-gray-100">
-                <span className="text-[11px] font-bold text-gray-500 uppercase block mb-2">
-                  Uji Coba Akun Demo (1-Klik Masuk):
-                </span>
-                <div className="grid grid-cols-3 gap-2">
                   <button
-                    onClick={() => { setEmail('siswa1@test.com'); setPassword('rahasia123'); handleLogin('siswa1@test.com', 'rahasia123'); }}
-                    className="py-2 px-1 bg-green-50 hover:bg-green-100 border border-green-200 rounded-xl text-center"
+                    type="submit"
+                    disabled={loginLoading}
+                    className="flex w-full items-center justify-center gap-2 rounded-control bg-brand-700 py-3 text-sm font-semibold text-white transition-colors hover:bg-brand-800 disabled:bg-brand-700/50"
                   >
-                    <div className="text-xs font-bold text-[#1B5E20]">Siswa</div>
-                    <div className="text-[10px] text-gray-500">Faiz</div>
+                    {loginLoading ? (
+                      <>
+                        <span
+                          className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white"
+                          aria-hidden="true"
+                        />
+                        <span>Memeriksa akun</span>
+                      </>
+                    ) : (
+                      'Masuk'
+                    )}
                   </button>
-                  <button
-                    onClick={() => { setEmail('ortu1@test.com'); setPassword('rahasia123'); handleLogin('ortu1@test.com', 'rahasia123'); }}
-                    className="py-2 px-1 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl text-center"
-                  >
-                    <div className="text-xs font-bold text-blue-900">Orang Tua</div>
-                    <div className="text-[10px] text-gray-500">Wali Faiz</div>
-                  </button>
-                  <button
-                    onClick={() => { setEmail('guru1@test.com'); setPassword('rahasia123'); handleLogin('guru1@test.com', 'rahasia123'); }}
-                    className="py-2 px-1 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-xl text-center"
-                  >
-                    <div className="text-xs font-bold text-amber-900">Guru / BK</div>
-                    <div className="text-[10px] text-gray-500">Ust. Hendra</div>
-                  </button>
-                </div>
+                </form>
               </div>
             </div>
+
+            <p className="mt-4 text-center text-xs leading-relaxed text-muted">
+              {isLocalBackend
+                ? 'Lupa kata sandi? Minta admin sekolah mengatur ulang dari menu Pengguna.'
+                : 'Akun dibuat oleh admin sekolah. Bila belum punya akses, hubungi Guru BK atau pembimbing rayon.'}
+            </p>
+
+            {isLocalBackend && (
+              <button
+                type="button"
+                onClick={handleResetLocal}
+                disabled={loginLoading}
+                className="mx-auto mt-3 block min-h-11 rounded-control px-3 text-xs font-semibold text-muted hover:text-danger disabled:opacity-60"
+              >
+                Hapus data lokal dan mulai ulang
+              </button>
+            )}
           </div>
-        </div>
+        </main>
       )}
 
       {/* ═══════════════════════════════════════════ */}
       {/* 2. DASHBOARD SISWA (ROLE: siswa)            */}
       {/* ═══════════════════════════════════════════ */}
       {currentRoute === 'siswa' && (
-        <div className={`flex-1 flex justify-center ${deviceView === 'mobile' ? 'py-4' : 'p-0'}`}>
-          <div className={`w-full ${deviceView === 'mobile' ? 'max-w-md shadow-2xl rounded-3xl overflow-hidden border border-green-200' : 'max-w-4xl'} bg-[#E8F5E9] flex flex-col min-h-screen relative pb-24`}>
+        <div className="flex-1 flex justify-center">
+          <div className="w-full max-w-3xl bg-paper flex flex-col min-h-screen relative pb-24">
             
             <Header
               fullName={currentStudent.name}
@@ -748,7 +1711,7 @@ export default function App() {
               {siswaTab === 'jurnal' && (
                 <div className="space-y-4">
                   {/* Multi-Sub Tab Navigator */}
-                  <div className="bg-white p-1 rounded-2xl shadow-sm border border-green-100 grid grid-cols-4 gap-1 text-[11px]">
+                  <div className="bg-white p-1 rounded-2xl shadow-sm border border-green-100 grid grid-cols-4 gap-1 text-xs">
                     <button
                       type="button"
                       onClick={() => setJurnalView('harian')}
@@ -797,7 +1760,7 @@ export default function App() {
                   </div>
 
                   {siswaSaveSuccess && (
-                    <div className="p-3 bg-green-500 text-white rounded-xl text-xs font-semibold flex items-center gap-2 shadow-sm animate-bounce">
+                    <div className="p-3 bg-green-500 text-white rounded-xl text-xs font-semibold flex items-center gap-2 shadow-sm">
                       <CheckCircle2 className="w-4 h-4" />
                       <span>Alhamdulillah, Jurnal Pembiasaan berhasil disimpan (+{calculateDailyPoints()} Poin)!</span>
                     </div>
@@ -819,7 +1782,7 @@ export default function App() {
                           />
                         </div>
                         <div className="text-right">
-                          <span className="text-[10px] text-gray-400 block">Potensi Harian:</span>
+                          <span className="text-xs text-gray-400 block">Potensi Harian:</span>
                           <span className="text-xs font-black text-[#1B5E20] bg-green-100 px-2 py-0.5 rounded-full">
                             +{calculateDailyPoints()} Poin
                           </span>
@@ -829,10 +1792,10 @@ export default function App() {
                       {/* Dispensasi Menstruasi Bar */}
                       <div className="bg-pink-50 border border-pink-200 rounded-2xl p-3 flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <span className="w-2.5 h-2.5 rounded-full bg-pink-500 animate-pulse" />
+                          <span className="w-2.5 h-2.5 rounded-full bg-pink-500" />
                           <div>
                             <span className="text-xs font-bold text-pink-900 block">Dispensasi Syar'i (Menstruasi)</span>
-                            <span className="text-[10px] text-pink-700">Untuk siswi yang sedang berhalangan haid</span>
+                            <span className="text-xs text-pink-700">Untuk siswi yang sedang berhalangan haid</span>
                           </div>
                         </div>
                         <button
@@ -872,14 +1835,14 @@ export default function App() {
                         <div className="bg-indigo-50/60 p-3 rounded-xl border border-indigo-100 space-y-2">
                           <div className="flex items-center justify-between">
                             <span className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
-                              <span>🌙 Sholat Tahajud</span>
-                              <span className="text-[10px] font-normal text-indigo-700">(Qiyamul Lail)</span>
+                              <span>Sholat Tahajud</span>
+                              <span className="text-xs font-normal text-indigo-700">(Qiyamul Lail)</span>
                             </span>
-                            <span className="text-[10px] font-bold text-indigo-600 bg-white px-2 py-0.5 rounded-full border border-indigo-200">
+                            <span className="text-xs font-bold text-indigo-600 bg-white px-2 py-0.5 rounded-full border border-indigo-200">
                               {jurnal.tahajud === '4_rakaat' ? '+6 Poin' : jurnal.tahajud === '2_rakaat' ? '+3 Poin' : jurnal.tahajud === 'menstruasi' ? 'Dispensasi (M)' : '0 Poin'}
                             </span>
                           </div>
-                          <div className="grid grid-cols-4 gap-1 text-[11px]">
+                          <div className="grid grid-cols-4 gap-1 text-xs">
                             {[
                               { id: '4_rakaat', label: '4 Rakaat', pts: '6' },
                               { id: '2_rakaat', label: '2 Rakaat', pts: '3' },
@@ -906,14 +1869,14 @@ export default function App() {
                         <div className="bg-amber-50/60 p-3 rounded-xl border border-amber-100 space-y-2">
                           <div className="flex items-center justify-between">
                             <span className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
-                              <span>☀️ Sholat Dhuha</span>
-                              <span className="text-[10px] font-normal text-amber-700">(Pagi Hari)</span>
+                              <span>Sholat Dhuha</span>
+                              <span className="text-xs font-normal text-amber-700">(Pagi Hari)</span>
                             </span>
-                            <span className="text-[10px] font-bold text-amber-700 bg-white px-2 py-0.5 rounded-full border border-amber-200">
+                            <span className="text-xs font-bold text-amber-700 bg-white px-2 py-0.5 rounded-full border border-amber-200">
                               {jurnal.dhuha === '4_rakaat' ? '+4 Poin' : jurnal.dhuha === '2_rakaat' ? '+2 Poin' : jurnal.dhuha === 'menstruasi' ? 'Dispensasi (M)' : '0 Poin'}
                             </span>
                           </div>
-                          <div className="grid grid-cols-4 gap-1 text-[11px]">
+                          <div className="grid grid-cols-4 gap-1 text-xs">
                             {[
                               { id: '4_rakaat', label: '4 Rakaat', pts: '4' },
                               { id: '2_rakaat', label: '2 Rakaat', pts: '2' },
@@ -944,7 +1907,7 @@ export default function App() {
                             <Sun className="w-4 h-4 text-emerald-600" />
                             Sholat Fardhu 5 Waktu
                           </h3>
-                          <span className="text-[10px] text-gray-400">Tepat Waktu (+4) • Masbuk (+3)</span>
+                          <span className="text-xs text-gray-400">Tepat Waktu (+4) • Masbuk (+3)</span>
                         </div>
 
                         <div className="space-y-2">
@@ -961,7 +1924,7 @@ export default function App() {
                                 <span className="text-xs font-bold text-gray-800 w-16">
                                   {item.label}
                                 </span>
-                                <div className="flex-1 grid grid-cols-4 gap-1 text-[10px]">
+                                <div className="flex-1 grid grid-cols-4 gap-1 text-xs">
                                   {[
                                     { id: 'berjamaah', label: 'Tepat Waktu (+4)' },
                                     { id: 'masbuk', label: 'Masbuk (+3)' },
@@ -1003,19 +1966,32 @@ export default function App() {
                           const isChecked = Boolean(jurnal[item.key as keyof typeof jurnal]);
                           const Icon = item.icon;
                           return (
-                            <div
+                            <button
                               key={item.key}
+                              type="button"
+                              aria-pressed={isChecked}
                               onClick={() => setJurnal({ ...jurnal, [item.key]: !isChecked })}
-                              className={`flex items-center justify-between p-2.5 rounded-xl border cursor-pointer transition-all ${
-                                isChecked ? 'bg-green-50/80 border-green-300 text-green-900' : 'bg-gray-50 border-gray-200 text-gray-600'
+                              className={`flex min-h-[44px] w-full items-center justify-between gap-2 rounded-control border px-2.5 py-2 text-left transition-colors ${
+                                isChecked
+                                  ? 'border-brand-700/40 bg-brand-50 text-brand-900'
+                                  : 'border-line bg-paper/50 text-muted hover:border-brand-700/30'
                               }`}
                             >
-                              <div className="flex items-center gap-2">
-                                <Icon className={`w-4 h-4 ${isChecked ? 'text-green-700' : 'text-gray-400'}`} />
-                                <span className={`text-xs ${isChecked ? 'font-bold' : 'font-medium'}`}>{item.label}</span>
-                              </div>
-                              {isChecked ? <CheckSquare className="w-4 h-4 text-[#2E7D32]" /> : <Square className="w-4 h-4 text-gray-300" />}
-                            </div>
+                              <span className="flex items-center gap-2">
+                                <Icon
+                                  className={`h-4 w-4 ${isChecked ? 'text-brand-700' : 'text-muted'}`}
+                                  aria-hidden="true"
+                                />
+                                <span className={`text-xs ${isChecked ? 'font-semibold' : 'font-medium'}`}>
+                                  {item.label}
+                                </span>
+                              </span>
+                              {isChecked ? (
+                                <CheckSquare className="h-4 w-4 shrink-0 text-brand-700" aria-hidden="true" />
+                              ) : (
+                                <Square className="h-4 w-4 shrink-0 text-muted/60" aria-hidden="true" />
+                              )}
+                            </button>
                           );
                         })}
                       </div>
@@ -1039,19 +2015,29 @@ export default function App() {
                         ].map((item) => {
                           const isChecked = Boolean(jurnal[item.key as keyof typeof jurnal]);
                           return (
-                            <div
+                            <button
                               key={item.key}
+                              type="button"
+                              aria-pressed={isChecked}
                               onClick={() => setJurnal({ ...jurnal, [item.key]: !isChecked })}
-                              className={`p-2.5 rounded-xl border cursor-pointer transition-all ${
-                                isChecked ? 'bg-green-50/80 border-green-300 text-green-900' : 'bg-gray-50 border-gray-200 text-gray-600'
+                              className={`block min-h-[44px] w-full rounded-control border px-2.5 py-2 text-left transition-colors ${
+                                isChecked
+                                  ? 'border-brand-700/40 bg-brand-50 text-brand-900'
+                                  : 'border-line bg-paper/50 text-muted hover:border-brand-700/30'
                               }`}
                             >
-                              <div className="flex items-center justify-between">
-                                <span className={`text-xs ${isChecked ? 'font-bold' : 'font-medium'}`}>{item.label}</span>
-                                {isChecked ? <CheckSquare className="w-4 h-4 text-[#2E7D32]" /> : <Square className="w-4 h-4 text-gray-300" />}
-                              </div>
-                              <p className="text-[10px] text-gray-500 mt-0.5">{item.desc}</p>
-                            </div>
+                              <span className="flex items-center justify-between gap-2">
+                                <span className={`text-xs ${isChecked ? 'font-semibold' : 'font-medium'}`}>
+                                  {item.label}
+                                </span>
+                                {isChecked ? (
+                                  <CheckSquare className="h-4 w-4 shrink-0 text-brand-700" aria-hidden="true" />
+                                ) : (
+                                  <Square className="h-4 w-4 shrink-0 text-muted/60" aria-hidden="true" />
+                                )}
+                              </span>
+                              <span className="mt-0.5 block text-xs text-muted">{item.desc}</span>
+                            </button>
                           );
                         })}
                       </div>
@@ -1087,7 +2073,7 @@ export default function App() {
                           <p className="text-xs text-gray-500">Evaluasi pekanan menuju Tanda Tangan Orang Tua</p>
                         </div>
                         <span className="text-xs font-bold text-green-800 bg-green-100 px-3 py-1 rounded-full">
-                          Pekan Ke-43
+                          Pekan ke-{currentWeek}
                         </span>
                       </div>
 
@@ -1109,16 +2095,26 @@ export default function App() {
                         ].map((item) => {
                           const isChecked = Boolean(mingguan[item.key as keyof typeof mingguan]);
                           return (
-                            <div
+                            <button
                               key={item.key}
+                              type="button"
+                              aria-pressed={isChecked}
                               onClick={() => setMingguan({ ...mingguan, [item.key]: !isChecked })}
-                              className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all ${
-                                isChecked ? 'bg-green-50/80 border-green-300 text-green-900' : 'bg-gray-50 border-gray-200 text-gray-600'
+                              className={`flex min-h-[44px] w-full items-center justify-between gap-2 rounded-control border px-3 py-2.5 text-left transition-colors ${
+                                isChecked
+                                  ? 'border-brand-700/40 bg-brand-50 text-brand-900'
+                                  : 'border-line bg-paper/50 text-muted hover:border-brand-700/30'
                               }`}
                             >
-                              <span className={`text-xs ${isChecked ? 'font-bold' : 'font-medium'}`}>{item.label}</span>
-                              {isChecked ? <CheckSquare className="w-5 h-5 text-[#2E7D32]" /> : <Square className="w-5 h-5 text-gray-300" />}
-                            </div>
+                              <span className={`text-xs ${isChecked ? 'font-semibold' : 'font-medium'}`}>
+                                {item.label}
+                              </span>
+                              {isChecked ? (
+                                <CheckSquare className="h-5 w-5 shrink-0 text-brand-700" aria-hidden="true" />
+                              ) : (
+                                <Square className="h-5 w-5 shrink-0 text-muted/60" aria-hidden="true" />
+                              )}
+                            </button>
                           );
                         })}
                       </div>
@@ -1137,7 +2133,7 @@ export default function App() {
                   {jurnalView === 'non_rutin' && (
                     <div className="space-y-3">
                       {/* Banner Penjelasan Resmi BKP */}
-                      <div className="bg-gradient-to-r from-green-50 to-emerald-50 p-3.5 rounded-2xl border border-green-200 shadow-sm">
+                      <div className="rounded-card border border-line bg-surface p-3.5">
                         <div className="flex items-start gap-2.5">
                           <div className="w-8 h-8 rounded-xl bg-[#1B5E20] text-white flex items-center justify-center shrink-0 mt-0.5 shadow-sm">
                             <BookOpen className="w-4 h-4" />
@@ -1145,13 +2141,13 @@ export default function App() {
                           <div>
                             <div className="flex items-center gap-2">
                               <h3 className="text-xs font-bold text-[#1B5E20]">Panduan Pengisian Kegiatan Non-Rutin</h3>
-                              <span className="text-[10px] bg-green-200 text-green-900 font-bold px-1.5 py-0.2 rounded">BKP Hal. 20</span>
+                              <span className="text-xs bg-green-200 text-green-900 font-bold px-1.5 py-0.2 rounded">BKP Hal. 20</span>
                             </div>
-                            <p className="text-[11px] text-gray-700 mt-1 leading-relaxed">
+                            <p className="text-xs text-gray-700 mt-1 leading-relaxed">
                               <strong>Kegiatan ini diisi mandiri oleh Siswa</strong> pada periode terkait (3-Mingguan, 9-Mingguan, atau Semester), kemudian disetujui / ditandatangani Orang Tua & Guru/Wali Rayon.
                             </p>
-                            <p className="text-[10px] text-emerald-800 mt-1 bg-white/70 p-1.5 rounded-lg border border-green-100">
-                              💡 <strong>Status kegiatan</strong> (seperti <em>&quot;Mengikuti dgn khidmat&quot;</em> atau <em>&quot;Memenuhi target hafalan&quot;</em>) adalah pilihan kriteria resmi yang dapat dipilih siswa di bawah ini sesuai kenyataan di lapangan.
+                            <p className="text-xs text-emerald-800 mt-1 bg-white/70 p-1.5 rounded-lg border border-green-100">
+                              <strong>Status kegiatan</strong> (seperti <em>&quot;Mengikuti dgn khidmat&quot;</em> atau <em>&quot;Memenuhi target hafalan&quot;</em>) adalah pilihan kriteria resmi yang dapat dipilih siswa di bawah ini sesuai kenyataan di lapangan.
                             </p>
                           </div>
                         </div>
@@ -1161,7 +2157,7 @@ export default function App() {
                       <div className="bg-white p-3 rounded-2xl border border-gray-100 shadow-sm space-y-2">
                         <div className="flex items-center justify-between text-xs">
                           <span className="font-bold text-gray-700">Filter Periode:</span>
-                          <span className="text-[11px] font-semibold text-[#1B5E20] bg-green-50 px-2 py-0.5 rounded-full border border-green-200">
+                          <span className="text-xs font-semibold text-[#1B5E20] bg-green-50 px-2 py-0.5 rounded-full border border-green-200">
                             Total Poin Periode: +{nonRutinList.reduce((acc, item) => acc + (item.poin > 0 ? item.poin : 0), 0)} Pts
                           </span>
                         </div>
@@ -1187,7 +2183,7 @@ export default function App() {
                       {nonRutinSaveSuccess && (
                         <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-2 text-xs text-emerald-800 animate-fade-in shadow-sm">
                           <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                          <span>Alhamdulillah! Isian Kegiatan Non-Rutin dan Poin berhasil diperbarui.</span>
+                          <span>Isian kegiatan non-rutin pekan ini tersimpan.</span>
                         </div>
                       )}
 
@@ -1200,10 +2196,10 @@ export default function App() {
                               <div className="flex items-start justify-between gap-2">
                                 <div>
                                   <div className="flex items-center gap-1.5 flex-wrap">
-                                    <span className="bg-green-100 text-[#1B5E20] font-bold text-[10px] px-2 py-0.5 rounded-full">
+                                    <span className="bg-green-100 text-[#1B5E20] font-bold text-xs px-2 py-0.5 rounded-full">
                                       {nr.kategori}
                                     </span>
-                                    <span className="bg-gray-100 text-gray-600 font-medium text-[10px] px-1.5 py-0.5 rounded">
+                                    <span className="bg-gray-100 text-gray-600 font-medium text-xs px-1.5 py-0.5 rounded">
                                       Mapel: {nr.mapel}
                                     </span>
                                   </div>
@@ -1222,7 +2218,7 @@ export default function App() {
 
                               {/* Pilihan Kriteria / Status Pelaksanaan oleh Siswa */}
                               <div>
-                                <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
                                   Pilih Status Capaian:
                                 </label>
                                 <select
@@ -1242,6 +2238,7 @@ export default function App() {
                                   }}
                                   className="w-full text-xs p-2 rounded-xl border border-gray-200 bg-gray-50/50 font-medium text-gray-800 focus:bg-white focus:border-[#2E7D32] focus:ring-1 focus:ring-[#2E7D32] outline-none transition-all cursor-pointer"
                                 >
+                                  <option value="">Belum diisi</option>
                                   {nr.options?.map((opt, idx) => (
                                     <option key={idx} value={opt.status}>
                                       {opt.label}
@@ -1253,7 +2250,7 @@ export default function App() {
                               {/* Field Khusus Jika Setoran Target Hafalan (nr-9) */}
                               {nr.id === 'nr-9' && (
                                 <div className="bg-amber-50/60 p-2.5 rounded-xl border border-amber-200/80 space-y-1.5">
-                                  <label className="block text-[10px] font-bold text-amber-900 uppercase tracking-wide">
+                                  <label className="block text-xs font-bold text-amber-900 uppercase tracking-wide">
                                     Target Surah / Hadits / Juz yang Disetorkan:
                                   </label>
                                   <input
@@ -1271,7 +2268,7 @@ export default function App() {
 
                               {/* Input Nama Saksi / Guru Penilai */}
                               <div className="flex items-center gap-2 pt-1 border-t border-gray-100">
-                                <span className="text-[10px] text-gray-500 shrink-0 font-medium">Saksi/Guru:</span>
+                                <span className="text-xs text-gray-500 shrink-0 font-medium">Saksi/Guru:</span>
                                 <input
                                   type="text"
                                   value={nr.saksi}
@@ -1280,7 +2277,7 @@ export default function App() {
                                     setNonRutinList(prev => prev.map(item => item.id === nr.id ? { ...item, saksi: val } : item));
                                   }}
                                   placeholder="Nama Guru Pengampu / Wali Rayon"
-                                  className="w-full text-[11px] px-2 py-1 rounded-lg border border-gray-200 bg-white text-gray-700 outline-none focus:border-green-600"
+                                  className="w-full text-xs px-2 py-1 rounded-lg border border-gray-200 bg-white text-gray-700 outline-none focus:border-green-600"
                                 />
                               </div>
                             </div>
@@ -1290,37 +2287,37 @@ export default function App() {
                       {/* Tombol Simpan Form Non-Rutin */}
                       <button
                         type="button"
-                        onClick={() => {
-                          setNonRutinSaveSuccess(true);
-                          setTimeout(() => setNonRutinSaveSuccess(false), 3500);
-                        }}
-                        className="w-full bg-[#1B5E20] hover:bg-[#2E7D32] text-white py-3 rounded-2xl font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition-all"
+                        onClick={saveNonRutin}
+                        disabled={nonRutinSaving}
+                        className="flex w-full items-center justify-center gap-2 rounded-control bg-brand-700 py-3 text-xs font-semibold text-white transition-colors hover:bg-brand-800 disabled:bg-brand-700/50"
                       >
-                        <Save className="w-4 h-4" />
-                        <span>Simpan Isian Kegiatan Non-Rutin</span>
+                        {nonRutinSaving ? (
+                          <>
+                            <span
+                              className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white"
+                              aria-hidden="true"
+                            />
+                            Menyimpan
+                          </>
+                        ) : (
+                          <>
+                            <Save className="h-4 w-4" aria-hidden="true" />
+                            Simpan isian pekan ini
+                          </>
+                        )}
                       </button>
                     </div>
                   )}
 
                   {/* SUB-VIEW 4: BORANG KESEHATAN TERPADU */}
                   {jurnalView === 'kesehatan' && (
-                    <BorangKesehatanView
-                      role="siswa"
-                      studentName={currentStudent.name}
-                      studentKelas={`${currentStudent.kelas} / ${currentStudent.rayon}`}
-                    />
+                    <ModulBelumTersedia judul="Borang kesehatan siswa" />
                   )}
                 </div>
               )}
 
               {/* TAB SISWA: BORANG KESEHATAN (DARI BOTTOM NAV) */}
-              {siswaTab === 'kesehatan' && (
-                <BorangKesehatanView
-                  role="siswa"
-                  studentName={currentStudent.name}
-                  studentKelas={`${currentStudent.kelas} / ${currentStudent.rayon}`}
-                />
-              )}
+              {siswaTab === 'kesehatan' && <ModulBelumTersedia judul="Borang kesehatan siswa" />}
 
               {/* TAB SISWA: HOME */}
               {siswaTab === 'home' && (
@@ -1338,17 +2335,17 @@ export default function App() {
                         <Sparkles className="w-4 h-4 text-emerald-600" />
                         <span>Ibadah & Karakter Hari Ini</span>
                       </h3>
-                      <button onClick={() => setSiswaTab('jurnal')} className="text-[11px] text-[#2E7D32] font-semibold hover:underline">
+                      <button onClick={() => setSiswaTab('jurnal')} className="text-xs text-[#2E7D32] font-semibold hover:underline">
                         Buka Jurnal &rarr;
                       </button>
                     </div>
                     <div className="grid grid-cols-2 gap-2 text-xs">
                       <div className="bg-green-50 p-2.5 rounded-xl border border-green-100">
-                        <span className="text-[10px] text-gray-500 block">Tahajud:</span>
+                        <span className="text-xs text-gray-500 block">Tahajud:</span>
                         <span className="font-bold text-green-900">{jurnal.tahajud === '4_rakaat' ? '4 Rakaat (+6)' : jurnal.tahajud === '2_rakaat' ? '2 Rakaat (+3)' : 'Belum'}</span>
                       </div>
                       <div className="bg-amber-50 p-2.5 rounded-xl border border-amber-100">
-                        <span className="text-[10px] text-gray-500 block">Dhuha:</span>
+                        <span className="text-xs text-gray-500 block">Dhuha:</span>
                         <span className="font-bold text-amber-900">{jurnal.dhuha === '4_rakaat' ? '4 Rakaat (+4)' : jurnal.dhuha === '2_rakaat' ? '2 Rakaat (+2)' : 'Belum'}</span>
                       </div>
                     </div>
@@ -1361,19 +2358,29 @@ export default function App() {
                         <Award className="w-4 h-4 text-yellow-500" />
                         <span>Prestasi Unggulan Santri</span>
                       </h3>
-                      <button onClick={() => setSiswaTab('poin')} className="text-[11px] text-[#2E7D32] font-semibold hover:underline">
+                      <button onClick={() => setSiswaTab('poin')} className="text-xs text-[#2E7D32] font-semibold hover:underline">
                         Lihat Semua
                       </button>
                     </div>
-                    <div className="p-3 bg-yellow-50/70 border border-yellow-200 rounded-xl">
-                      <span className="text-xs font-bold text-yellow-900 block">{prestasiSiswa[0].judul}</span>
-                      <span className="text-[10px] text-yellow-700 block mt-0.5">{prestasiSiswa[0].kategori} • +{prestasiSiswa[0].poin} Poin</span>
-                    </div>
+                    {prestasiList[0] ? (
+                      <div className="p-3 bg-yellow-50/70 border border-yellow-200 rounded-xl">
+                        <span className="text-xs font-bold text-yellow-900 block">{prestasiList[0].judul}</span>
+                        <span className="text-xs text-yellow-700 block mt-0.5">
+                          {prestasiList[0].kategori} •{' '}
+                          {prestasiList[0].status === 'verified'
+                            ? `+${prestasiList[0].poin} Poin`
+                            : prestasiList[0].status === 'pending'
+                              ? 'Menunggu verifikasi'
+                              : 'Ditolak'}
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="p-3 bg-yellow-50/70 border border-yellow-200 rounded-xl text-xs text-yellow-800">
+                        Belum ada prestasi tercatat. Ajukan dari tab Poin.
+                      </div>
+                    )}
                   </div>
 
-                  <div className="bg-[#1B5E20]/10 border border-green-200 rounded-2xl p-4 text-xs text-green-900 italic">
-                    "Menjaga sholat fardhu berjamaah, tahajud, dhuha, tidur sebelum 22.00, minum air putih 2L, serta pemeriksaan kesehatan adalah ikhtiar pembentukan insan bertakwa."
-                  </div>
                 </div>
               )}
 
@@ -1407,22 +2414,151 @@ export default function App() {
                     ))}
                   </div>
 
-                  {/* Daftar Prestasi Santri */}
+                  {/* Pengajuan & Daftar Prestasi Santri */}
                   {(poinTabFilter === 'semua' || poinTabFilter === 'prestasi') && (
                     <div className="space-y-2">
-                      <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider px-1">
-                        🏆 Daftar Prestasi yang Diraih (Hal 114)
-                      </h4>
-                      {prestasiSiswa.map((pres) => (
-                        <div key={pres.id} className="bg-white rounded-2xl p-3.5 shadow-sm border border-yellow-200 bg-gradient-to-r from-yellow-50/50 to-white">
+                      <div className="flex items-center justify-between px-1">
+                        <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider">
+                          Prestasi Santri
+                        </h4>
+                        <button
+                          type="button"
+                          onClick={() => setShowFormPrestasi((v) => !v)}
+                          className="text-xs font-bold text-[#2E7D32] bg-green-50 border border-green-200 px-2.5 py-1 rounded-lg hover:bg-green-100"
+                        >
+                          {showFormPrestasi ? 'Tutup Form' : '+ Ajukan Prestasi'}
+                        </button>
+                      </div>
+
+                      {prestasiMsg && (
+                        <div className="p-2.5 rounded-xl bg-green-50 border border-green-200 text-xs text-green-800">
+                          {prestasiMsg}
+                        </div>
+                      )}
+
+                      {showFormPrestasi && (
+                        <form
+                          onSubmit={handleSubmitPrestasi}
+                          className="bg-white rounded-2xl p-4 shadow-sm border border-green-100 space-y-2.5 text-xs"
+                        >
+                          <p className="text-xs text-gray-500">
+                            Pengajuan dikirim sebagai <b>pending</b>. Poin ditentukan oleh guru / pembimbing rayon saat verifikasi.
+                          </p>
+                          <div>
+                            <label className="block font-semibold text-gray-700 mb-1">Nama Prestasi *</label>
+                            <input
+                              type="text"
+                              required
+                              value={prestasiForm.judul}
+                              onChange={(e) => setPrestasiForm({ ...prestasiForm, judul: e.target.value })}
+                              placeholder="Contoh: Juara 1 Lomba Tahfidz 5 Juz"
+                              className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:border-[#2E7D32] outline-none"
+                            />
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="block font-semibold text-gray-700 mb-1">Kategori</label>
+                              <select
+                                value={prestasiForm.kategori}
+                                onChange={(e) => setPrestasiForm({ ...prestasiForm, kategori: e.target.value })}
+                                className="w-full px-2 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none"
+                              >
+                                {['Prestasi Kejuaraan', 'Duta Karakter', 'Peduli Lingkungan', 'Akademik', 'Keagamaan', 'Lainnya'].map((k) => (
+                                  <option key={k} value={k}>{k}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block font-semibold text-gray-700 mb-1">Tingkat</label>
+                              <select
+                                value={prestasiForm.tingkat}
+                                onChange={(e) => setPrestasiForm({ ...prestasiForm, tingkat: e.target.value })}
+                                className="w-full px-2 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none"
+                              >
+                                {['Sekolah', 'Kecamatan', 'Kabupaten', 'Provinsi', 'Nasional', 'Internasional'].map((t) => (
+                                  <option key={t} value={t}>{t}</option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="block font-semibold text-gray-700 mb-1">Capaian *</label>
+                              <input
+                                type="text"
+                                required
+                                value={prestasiForm.capaian}
+                                onChange={(e) => setPrestasiForm({ ...prestasiForm, capaian: e.target.value })}
+                                placeholder="Contoh: Juara 1"
+                                className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none"
+                              />
+                            </div>
+                            <div>
+                              <label className="block font-semibold text-gray-700 mb-1">Tanggal</label>
+                              <input
+                                type="date"
+                                value={prestasiForm.tanggal}
+                                onChange={(e) => setPrestasiForm({ ...prestasiForm, tanggal: e.target.value })}
+                                className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none"
+                              />
+                            </div>
+                          </div>
+                          <div>
+                            <label className="block font-semibold text-gray-700 mb-1">Keterangan</label>
+                            <textarea
+                              rows={2}
+                              value={prestasiForm.deskripsi}
+                              onChange={(e) => setPrestasiForm({ ...prestasiForm, deskripsi: e.target.value })}
+                              className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none"
+                            />
+                          </div>
+                          <button
+                            type="submit"
+                            disabled={prestasiSubmitting}
+                            className="w-full py-2.5 bg-[#2E7D32] hover:bg-[#1B5E20] disabled:bg-gray-300 text-white font-bold rounded-xl flex items-center justify-center gap-1.5"
+                          >
+                            <Save className="w-4 h-4" />
+                            {prestasiSubmitting ? 'Mengirim…' : 'Kirim Pengajuan'}
+                          </button>
+                        </form>
+                      )}
+
+                      {prestasiList.length === 0 && (
+                        <p className="text-xs text-gray-500 px-1">Belum ada prestasi.</p>
+                      )}
+
+                      {prestasiList.map((pres) => (
+                        <div key={pres.id} className="rounded-card border border-line bg-surface p-3.5">
                           <div className="flex items-start justify-between gap-2">
                             <div>
                               <span className="text-xs font-bold text-gray-900 block">{pres.judul}</span>
-                              <p className="text-[11px] text-yellow-800 mt-0.5">Tingkat: {pres.tingkat} • Capaian: {pres.capaian} • Pembina: {pres.pembina}</p>
-                              <span className="text-[10px] text-gray-400 mt-1 block">{pres.tanggal}</span>
+                              <p className="text-xs text-yellow-800 mt-0.5">
+                                Tingkat: {pres.tingkat} • Capaian: {pres.capaian}
+                              </p>
+                              <div className="flex items-center gap-1.5 mt-1">
+                                <span
+                                  className={`text-xs font-bold px-2 py-0.5 rounded-md ${
+                                    pres.status === 'verified'
+                                      ? 'bg-green-100 text-green-800'
+                                      : pres.status === 'rejected'
+                                        ? 'bg-red-100 text-red-700'
+                                        : 'bg-amber-100 text-amber-800'
+                                  }`}
+                                >
+                                  {pres.status === 'verified'
+                                    ? 'Terverifikasi'
+                                    : pres.status === 'rejected'
+                                      ? 'Ditolak'
+                                      : 'Menunggu verifikasi'}
+                                </span>
+                                <span className="text-xs text-gray-400">{pres.tanggal}</span>
+                              </div>
+                              {pres.catatan_verifikasi && (
+                                <p className="text-xs text-gray-500 mt-1 italic">Catatan: {pres.catatan_verifikasi}</p>
+                              )}
                             </div>
                             <span className="text-xs font-black text-yellow-600 bg-yellow-100 px-2 py-0.5 rounded-full shrink-0">
-                              +{pres.poin} Pts
+                              {pres.status === 'verified' ? `+${pres.poin} Pts` : '0 Pts'}
                             </span>
                           </div>
                         </div>
@@ -1452,13 +2588,13 @@ export default function App() {
                             <div>
                               <div className="flex items-center gap-1.5 mb-1">
                                 <span
-                                  className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
+                                  className={`text-xs font-bold px-2 py-0.5 rounded-md ${
                                     log.tipe === 'apresiasi' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
                                   }`}
                                 >
                                   {log.kode}
                                 </span>
-                                <span className="text-[10px] text-gray-400">{log.time}</span>
+                                <span className="text-xs text-gray-400">{log.time}</span>
                               </div>
                               <p className="text-xs font-medium text-gray-800">{log.deskripsi}</p>
                             </div>
@@ -1479,38 +2615,48 @@ export default function App() {
               {/* TAB SISWA: PROFIL */}
               {siswaTab === 'profil' && (
                 <div className="space-y-4">
-                  <div className="bg-white rounded-2xl p-4 shadow-sm border border-green-100 text-center">
-                    <div className="w-16 h-16 rounded-full bg-green-100 text-[#1B5E20] font-black text-xl flex items-center justify-center mx-auto mb-2 border-2 border-green-300">
-                      FA
+                  <section className="rounded-card border border-line bg-surface p-4">
+                    <div className="flex items-center gap-3">
+                      <span
+                        aria-hidden="true"
+                        className="flex h-12 w-12 shrink-0 items-center justify-center rounded-control bg-brand-50 text-base font-bold text-brand-800"
+                      >
+                        {initials(currentStudent.name)}
+                      </span>
+                      <div className="min-w-0">
+                        <h2 className="truncate text-sm font-semibold text-ink">{currentStudent.name}</h2>
+                        <p className="text-xs text-muted">
+                          {currentStudent.kelas} · Rayon {currentStudent.rayon}
+                        </p>
+                        {accountEmail && (
+                          <p className="truncate text-xs text-muted">{accountEmail}</p>
+                        )}
+                      </div>
                     </div>
-                    <h3 className="text-sm font-bold text-gray-900">{currentStudent.name}</h3>
-                    <p className="text-xs text-gray-500">NISN: 0072618291 • {currentStudent.kelas}</p>
-                    <div className="inline-block mt-2 bg-green-100 text-green-800 px-3 py-1 rounded-full text-xs font-bold">
-                      Rayon: {currentStudent.rayon}
-                    </div>
-                  </div>
 
-                  <div className="bg-white rounded-2xl p-4 shadow-sm border border-green-100 space-y-2 text-xs">
-                    <div className="flex justify-between py-1.5 border-b border-gray-100">
-                      <span className="text-gray-500">Nama Pembimbing Rayon:</span>
-                      <span className="font-semibold text-gray-800">Ustadz Hendra Gunawan, S.Pd.I</span>
-                    </div>
-                    <div className="flex justify-between py-1.5 border-b border-gray-100">
-                      <span className="text-gray-500">Program Keahlian:</span>
-                      <span className="font-semibold text-gray-800">Teknik Komputer & Jaringan</span>
-                    </div>
-                    <div className="flex justify-between py-1.5 border-b border-gray-100">
-                      <span className="text-gray-500">Total Akumulasi Poin:</span>
-                      <span className="font-bold text-[#1B5E20]">{currentStudent.points} Pts</span>
-                    </div>
-                  </div>
+                    <dl className="mt-4 divide-y divide-line border-t border-line text-xs">
+                      <div className="flex items-center justify-between py-2">
+                        <dt className="text-muted">NISN</dt>
+                        <dd className="font-semibold text-ink tabular">
+                          {currentStudent.nisn && currentStudent.nisn !== '-'
+                            ? currentStudent.nisn
+                            : 'Belum diisi admin'}
+                        </dd>
+                      </div>
+                      <div className="flex items-center justify-between py-2">
+                        <dt className="text-muted">Total poin karakter</dt>
+                        <dd className="font-semibold text-brand-800 tabular">{currentStudent.points}</dd>
+                      </div>
+                    </dl>
+                  </section>
 
                   <button
+                    type="button"
                     onClick={handleLogout}
-                    className="w-full py-3 bg-red-50 hover:bg-red-100 text-red-600 font-bold text-xs rounded-xl border border-red-200 transition-all flex items-center justify-center gap-2"
+                    className="flex w-full items-center justify-center gap-2 rounded-control border border-danger/25 bg-danger-50 py-3 text-xs font-semibold text-danger hover:bg-danger/10"
                   >
-                    <LogOut className="w-4 h-4" />
-                    <span>Keluar dari Akun Siswa</span>
+                    <LogOut className="h-4 w-4" aria-hidden="true" />
+                    Keluar dari akun
                   </button>
                 </div>
               )}
@@ -1530,12 +2676,12 @@ export default function App() {
       {/* 3. DASHBOARD ORANG TUA (ROLE: orang_tua)    */}
       {/* ═══════════════════════════════════════════ */}
       {currentRoute === 'ortu' && (
-        <div className={`flex-1 flex justify-center ${deviceView === 'mobile' ? 'py-4' : 'p-0'}`}>
-          <div className={`w-full ${deviceView === 'mobile' ? 'max-w-md shadow-2xl rounded-3xl overflow-hidden border border-green-200' : 'max-w-4xl'} bg-[#E8F5E9] flex flex-col min-h-screen relative pb-24`}>
+        <div className="flex-1 flex justify-center">
+          <div className="w-full max-w-3xl bg-paper flex flex-col min-h-screen relative pb-24">
             
             <Header
               greeting="Assalamu’alaikum, Bapak/Ibu"
-              fullName="Bapak Ahmad Rifa'i"
+              fullName={profile?.fullName || "Bapak/Ibu Wali"}
               subtitle={`Wali dari: ${currentStudent.name} (${currentStudent.kelas})`}
               poin={currentStudent.points}
               onLogout={handleLogout}
@@ -1546,164 +2692,146 @@ export default function App() {
               {/* TAB ORTU: HOME */}
               {ortuTab === 'home' && (
                 <div className="space-y-4">
-                  {/* Card Rekap Mingguan: jumlah hari penuh, sakit, haid */}
-                  <div className="bg-white rounded-2xl p-4 shadow-sm border border-green-100">
-                    <div className="flex items-center justify-between mb-3 border-b border-gray-100 pb-2">
-                      <h3 className="text-sm font-bold text-[#1B5E20] flex items-center gap-2">
-                        <Calendar className="w-4 h-4 text-green-700" />
-                        Rekap Mingguan Ke-43
-                      </h3>
-                      <span className="text-[11px] text-gray-500">Target 7 Hari</span>
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-2 text-center">
-                      <div className="bg-green-50 p-3 rounded-xl border border-green-200">
-                        <span className="text-[11px] text-gray-600 block">Hari Penuh</span>
-                        <span className="text-xl font-black text-[#1B5E20]">6</span>
-                        <span className="text-[10px] text-green-700 block font-semibold">Lengkap</span>
-                      </div>
-                      <div className="bg-blue-50 p-3 rounded-xl border border-blue-200">
-                        <span className="text-[11px] text-gray-600 block">Sakit</span>
-                        <span className="text-xl font-black text-blue-800">1</span>
-                        <span className="text-[10px] text-blue-600 block font-semibold">Surat Dokter</span>
-                      </div>
-                      <div className="bg-purple-50 p-3 rounded-xl border border-purple-200">
-                        <span className="text-[11px] text-gray-600 block">Haid/Udzur</span>
-                        <span className="text-xl font-black text-purple-800">0</span>
-                        <span className="text-[10px] text-purple-600 block font-semibold">Syari</span>
-                      </div>
-                    </div>
-
-                    <div className="mt-3 pt-3 border-t border-gray-100 flex items-center justify-between">
-                      <span className="text-xs text-gray-600">Status Tanda Tangan:</span>
-                      {ttdSavedUrl ? (
-                        <span className="text-xs font-bold text-green-700 bg-green-100 px-2.5 py-1 rounded-full flex items-center gap-1">
-                          <Check className="w-3.5 h-3.5" /> Sudah Disahkan
-                        </span>
-                      ) : (
-                        <button
-                          onClick={() => setOrtuTab('ttd')}
-                          className="text-xs font-bold text-amber-800 bg-amber-100 px-2.5 py-1 rounded-full hover:bg-amber-200"
-                        >
-                          Perlu Tanda Tangan &rarr;
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Card Kesehatan & Ibadah Anak */}
-                  <div className="bg-white rounded-2xl p-4 shadow-sm border border-green-100 space-y-2">
-                    <div className="flex items-center justify-between pb-1.5 border-b border-gray-100">
-                      <h3 className="text-xs font-bold text-gray-700 uppercase flex items-center gap-1.5">
-                        <HeartPulse className="w-4 h-4 text-green-700" />
-                        <span>Kesehatan & Pembiasaan Ananda</span>
-                      </h3>
-                      <button onClick={() => setOrtuTab('kesehatan')} className="text-[11px] text-[#2E7D32] font-semibold hover:underline">
-                        Lihat Borang &rarr;
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 text-xs">
-                      <div className="bg-green-50/70 p-2.5 rounded-xl border border-green-100">
-                        <span className="text-[10px] text-gray-500 block">Status Gizi (IMT):</span>
-                        <span className="font-bold text-green-800">20.5 (Normal / Baik)</span>
-                      </div>
-                      <div className="bg-green-50/70 p-2.5 rounded-xl border border-green-100">
-                        <span className="text-[10px] text-gray-500 block">Kesehatan Gigi:</span>
-                        <span className="font-bold text-green-800">Bebas Karang / Sehat</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Card Peringatan / Pelanggaran */}
-                  <div className="bg-white rounded-2xl p-4 shadow-sm border border-green-100">
-                    <h3 className="text-sm font-bold text-gray-800 mb-2 flex items-center gap-2">
-                      <ShieldAlert className="w-4 h-4 text-red-500" />
-                      Peringatan Pelanggaran
-                    </h3>
-                    <div className="bg-red-50/70 border border-red-200 rounded-xl p-3 flex items-start justify-between">
+                  {/* Saldo poin anak, satu-satunya angka besar di layar ini. */}
+                  <section className="rounded-card border border-line bg-surface p-4">
+                    <div className="flex items-start justify-between gap-3">
                       <div>
-                        <span className="text-xs font-bold text-red-800">[K 4.18] Kopyah tertinggal saat apel pagi</span>
-                        <p className="text-[11px] text-red-600 mt-0.5">Tercatat pada 27 Okt 2026 oleh Ustadz BK</p>
+                        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">
+                          Poin karakter ananda
+                        </h2>
+                        <p className="mt-1 text-3xl font-bold tabular text-brand-800">
+                          {currentStudent.points}
+                          <span className="ml-1 text-sm font-medium text-muted">poin</span>
+                        </p>
+                        <p className="mt-1 text-xs text-muted">
+                          {currentStudent.name} · {currentStudent.kelas} · Rayon {currentStudent.rayon}
+                        </p>
                       </div>
-                      <span className="text-xs font-black text-red-600 shrink-0">-150 Pts</span>
+                      <span className="shrink-0 rounded-control border border-line bg-paper px-2.5 py-1 text-xs font-semibold text-brand-800">
+                        Pekan ke-{currentWeek}
+                      </span>
                     </div>
-                  </div>
 
-                  {/* Card Highlight Laporan Bulanan & Tren */}
-                  <div className="bg-gradient-to-br from-[#1B5E20] to-[#2E7D32] rounded-2xl p-4 text-white shadow-md relative overflow-hidden">
-                    <div className="absolute right-0 top-0 translate-x-3 -translate-y-3 opacity-15 pointer-events-none">
-                      <TrendingUp className="w-32 h-32" />
-                    </div>
-                    <div className="relative z-10">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="bg-white/20 backdrop-blur-xs text-green-100 text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1">
-                          <Sparkles className="w-3 h-3 text-yellow-300" />
-                          Laporan Bulan Ini • Oktober 2026
-                        </span>
-                        <span className="text-[11px] text-green-200 font-semibold">Predikat: Mumtaz</span>
+                    <div className="mt-3">
+                      <div className="flex items-center justify-between text-xs text-muted">
+                        <span>Target kelulusan karakter</span>
+                        <span className="tabular">{targetPoin} poin</span>
                       </div>
-                      
-                      <h3 className="text-base font-black tracking-tight mb-1">
-                        Tren Karakter & Akumulasi Poin
-                      </h3>
-                      <p className="text-xs text-green-100/90 leading-relaxed mb-3">
-                        Total raihan <strong className="text-white">+2.450 poin</strong> (122% dari target) dengan konsistensi pembiasaan <strong className="text-white">94%</strong>.
-                      </p>
-
-                      <div className="grid grid-cols-3 gap-2 bg-black/15 rounded-xl p-2.5 mb-3 text-center border border-white/10">
-                        <div>
-                          <span className="text-[10px] text-green-200 block">Net Poin</span>
-                          <span className="text-sm font-extrabold text-white">+2.450</span>
-                        </div>
-                        <div>
-                          <span className="text-[10px] text-green-200 block">Kepatuhan</span>
-                          <span className="text-sm font-extrabold text-white">94%</span>
-                        </div>
-                        <div>
-                          <span className="text-[10px] text-green-200 block">Tren</span>
-                          <span className="text-sm font-extrabold text-yellow-300 flex items-center justify-center gap-0.5">
-                            <TrendingUp className="w-3.5 h-3.5" /> Naik
-                          </span>
-                        </div>
-                      </div>
-
-                      <button
-                        onClick={() => setOrtuTab('laporan')}
-                        className="w-full py-2.5 bg-white hover:bg-green-50 text-[#1B5E20] font-bold text-xs rounded-xl shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-98"
+                      <div
+                        className="mt-1 h-2 w-full overflow-hidden rounded-full bg-paper"
+                        role="progressbar"
+                        aria-valuemin={0}
+                        aria-valuemax={targetPoin}
+                        aria-valuenow={Math.max(0, currentStudent.points)}
+                        aria-label="Capaian poin terhadap target kelulusan"
                       >
-                        <BarChart3 className="w-4 h-4 text-green-700" />
-                        <span>Buka Grafik Tren & Analisis Lengkap &rarr;</span>
+                        <div
+                          className="h-full rounded-full bg-brand-700"
+                          style={{ width: `${progressPct}%` }}
+                        />
+                      </div>
+                      <p className="mt-1 text-xs text-muted tabular">{progressPct}% dari target</p>
+                    </div>
+                  </section>
+
+                  {/* Pengesahan pekan ini. Status hanya diklaim setelah tersimpan. */}
+                  <section className="rounded-card border border-line bg-surface p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <h2 className="text-sm font-semibold text-ink">Pengesahan pekan ke-{currentWeek}</h2>
+                        <p className="mt-0.5 text-xs text-muted">
+                          {ttdSavedUrl
+                            ? 'Tanda tangan tersimpan pada sesi ini.'
+                            : 'Buku BKP pekan ini belum ditandatangani.'}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setOrtuTab('ttd')}
+                        className="shrink-0 rounded-control bg-brand-700 px-3 py-2 text-xs font-semibold text-white hover:bg-brand-800"
+                      >
+                        {ttdSavedUrl ? 'Lihat lembar' : 'Tanda tangani'}
                       </button>
                     </div>
-                  </div>
+                  </section>
 
-                  <button
-                    onClick={() => setOrtuTab('ttd')}
-                    className="w-full py-3.5 bg-[#2E7D32] hover:bg-[#1B5E20] text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2"
-                  >
-                    <PenTool className="w-4 h-4" />
-                    <span>Buka Lembar Tanda Tangan Digital</span>
-                  </button>
+                  {/* Riwayat poin terbaru, diambil dari koleksi poin_log. */}
+                  <section className="rounded-card border border-line bg-surface">
+                    <div className="flex items-center justify-between border-b border-line px-4 py-3">
+                      <h2 className="text-sm font-semibold text-ink">Catatan poin terbaru</h2>
+                      <button
+                        type="button"
+                        onClick={() => setOrtuTab('laporan')}
+                        className="text-xs font-semibold text-brand-700 hover:underline"
+                      >
+                        Lihat laporan
+                      </button>
+                    </div>
+
+                    {studentPoinLogs.length === 0 ? (
+                      <p className="px-4 py-4 text-xs text-muted">
+                        Belum ada catatan poin dari guru atau pembimbing rayon.
+                      </p>
+                    ) : (
+                      <ul className="divide-y divide-line">
+                        {studentPoinLogs.slice(0, 4).map((log) => (
+                          <li key={log.id} className="flex items-start justify-between gap-3 px-4 py-3">
+                            <div>
+                              <p className="text-xs font-semibold text-ink">
+                                <span className="mr-1.5 rounded bg-paper px-1.5 py-0.5 text-xs font-bold text-muted">
+                                  {log.kode}
+                                </span>
+                                {log.deskripsi}
+                              </p>
+                              <p className="mt-0.5 text-xs text-muted">{log.time}</p>
+                            </div>
+                            <span
+                              className={`shrink-0 text-xs font-bold tabular ${
+                                log.tipe === 'apresiasi' ? 'text-brand-700' : 'text-danger'
+                              }`}
+                            >
+                              {log.tipe === 'apresiasi' ? `+${log.poin}` : `-${log.poin}`}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </section>
+
+                  {lastKonsekuensi && (
+                    <section className="rounded-card border border-danger/25 bg-danger-50 p-4">
+                      <h2 className="flex items-center gap-1.5 text-sm font-semibold text-danger">
+                        <ShieldAlert className="h-4 w-4" aria-hidden="true" />
+                        Konsekuensi terakhir
+                      </h2>
+                      <p className="mt-1 text-xs text-ink">
+                        {lastKonsekuensi.deskripsi}
+                      </p>
+                      <p className="mt-1 text-xs text-muted">
+                        {lastKonsekuensi.kode} · {lastKonsekuensi.time} ·{' '}
+                        <span className="font-semibold text-danger tabular">-{lastKonsekuensi.poin} poin</span>
+                      </p>
+                    </section>
+                  )}
                 </div>
               )}
 
               {/* TAB ORTU: LAPORAN BULANAN (RECHARTS) */}
               {ortuTab === 'laporan' && (
-                <LaporanBulananOrtu
-                  studentName={currentStudent.name}
-                  studentKelas={currentStudent.kelas}
-                  studentRayon={currentStudent.rayon}
-                  currentPoints={currentStudent.points}
-                />
+                <Suspense fallback={<MemuatPanel label="laporan" />}>
+                  <LaporanBulananOrtu
+                    studentName={currentStudent.name}
+                    studentKelas={currentStudent.kelas}
+                    studentRayon={currentStudent.rayon}
+                    currentPoints={currentStudent.points}
+                    poinLogs={studentPoinLogs}
+                  />
+                </Suspense>
               )}
 
               {/* TAB ORTU: BORANG KESEHATAN */}
               {ortuTab === 'kesehatan' && (
-                <BorangKesehatanView
-                  role="orang_tua"
-                  studentName={currentStudent.name}
-                  studentKelas={`${currentStudent.kelas} / ${currentStudent.rayon}`}
-                />
+                <ModulBelumTersedia judul="Borang kesehatan ananda" />
               )}
 
               {/* TAB ORTU: TTD DIGITAL */}
@@ -1717,9 +2845,9 @@ export default function App() {
                   </div>
 
                   {ttdSuccess && (
-                    <div className="p-3 bg-green-500 text-white rounded-xl text-xs font-semibold flex items-center gap-2 shadow-sm animate-bounce">
+                    <div className="p-3 bg-green-500 text-white rounded-xl text-xs font-semibold flex items-center gap-2 shadow-sm">
                       <CheckCircle2 className="w-4 h-4" />
-                      <span>Alhamdulillah, Tanda Tangan berhasil disimpan dan diverifikasi!</span>
+                      <span>Tanda tangan tersimpan untuk pekan ini.</span>
                     </div>
                   )}
 
@@ -1745,7 +2873,7 @@ export default function App() {
                           className: 'cursor-crosshair w-full h-[180px]',
                         }}
                       />
-                      <span className="absolute bottom-1 text-[10px] text-gray-400 pointer-events-none">
+                      <span className="absolute bottom-1 text-xs text-gray-400 pointer-events-none">
                         (Tanda tangani menggunakan jari atau kursor)
                       </span>
                     </div>
@@ -1770,7 +2898,7 @@ export default function App() {
                     <div className="bg-white rounded-2xl p-4 shadow-sm border border-green-100 text-center">
                       <h4 className="text-xs font-bold text-gray-700 mb-2">Pratinjau Tanda Tangan Tersimpan:</h4>
                       <img src={ttdSavedUrl} alt="TTD Ortu" className="mx-auto max-h-24 border rounded-xl bg-gray-50 p-2" />
-                      <span className="inline-block mt-2 text-[11px] text-green-700 font-bold bg-green-50 px-3 py-1 rounded-full">
+                      <span className="inline-block mt-2 text-xs text-green-700 font-bold bg-green-50 px-3 py-1 rounded-full">
                         Status: Sah & Tercatat di Server BKP
                       </span>
                     </div>
@@ -1781,55 +2909,72 @@ export default function App() {
               {/* TAB ORTU: NOTIFIKASI */}
               {ortuTab === 'notifikasi' && (
                 <div className="space-y-3">
-                  <div className="bg-white rounded-2xl p-4 shadow-sm border border-green-100">
-                    <h3 className="text-sm font-bold text-gray-800">Notifikasi & Laporan Sekolah</h3>
-                    <p className="text-xs text-gray-500">Pemberitahuan resmi pembimbing rayon dan BK</p>
-                  </div>
+                  <section className="rounded-card border border-line bg-surface p-4">
+                    <h2 className="text-sm font-semibold text-ink">Pemberitahuan sekolah</h2>
+                    <p className="mt-0.5 text-xs text-muted">
+                      Pesan resmi dari pembimbing rayon dan BK untuk akun ini.
+                    </p>
+                  </section>
 
-                  <div className="space-y-2">
-                    <div className="bg-white p-3.5 rounded-2xl border border-gray-100 shadow-sm space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-[#1B5E20]">Undangan Kumpul Rayon Pekanan</span>
-                        <span className="text-[10px] text-gray-400">Kemarin</span>
-                      </div>
-                      <p className="text-xs text-gray-600">
-                        Kumpul rayon evaluasi MEB 1-9 akan diadakan hari Jumat setelah sholat Ashar di Masjid Al-Ikram.
-                      </p>
-                    </div>
-
-                    <div className="bg-white p-3.5 rounded-2xl border border-gray-100 shadow-sm space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-amber-700">Skrining Kesehatan 9-Mingguan</span>
-                        <span className="text-[10px] text-gray-400">3 hari lalu</span>
-                      </div>
-                      <p className="text-xs text-gray-600">
-                        Ananda telah selesai mengikuti pengukuran fisik TB, BB, tekanan darah, dan pemeriksaan kesehatan gigi di UKS.
-                      </p>
-                    </div>
-                  </div>
+                  {notifikasiList.length === 0 ? (
+                    <p className="rounded-card border border-line bg-surface px-4 py-5 text-xs text-muted">
+                      Belum ada pemberitahuan.
+                    </p>
+                  ) : (
+                    <ul className="divide-y divide-line overflow-hidden rounded-card border border-line bg-surface">
+                      {notifikasiList.map((n) => (
+                        <li key={n.id} className="px-4 py-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <h3 className="text-xs font-semibold text-ink">{n.judul}</h3>
+                            <span className="shrink-0 text-xs text-muted">{n.time}</span>
+                          </div>
+                          {n.isi && <p className="mt-1 text-xs leading-relaxed text-ink/90">{n.isi}</p>}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               )}
 
               {/* TAB ORTU: PROFIL */}
               {ortuTab === 'profil' && (
                 <div className="space-y-4">
-                  <div className="bg-white rounded-2xl p-4 shadow-sm border border-green-100 text-center">
-                    <div className="w-16 h-16 rounded-full bg-blue-100 text-blue-900 font-black text-xl flex items-center justify-center mx-auto mb-2 border-2 border-blue-300">
-                      AR
+                  <section className="rounded-card border border-line bg-surface p-4">
+                    <div className="flex items-center gap-3">
+                      <span
+                        aria-hidden="true"
+                        className="flex h-12 w-12 shrink-0 items-center justify-center rounded-control bg-brand-50 text-base font-bold text-brand-800"
+                      >
+                        {initials(profile?.fullName || 'Wali Santri')}
+                      </span>
+                      <div className="min-w-0">
+                        <h2 className="truncate text-sm font-semibold text-ink">
+                          {profile?.fullName || 'Wali Santri'}
+                        </h2>
+                        <p className="text-xs text-muted">Orang tua / wali santri</p>
+                        {accountEmail && (
+                          <p className="truncate text-xs text-muted">{accountEmail}</p>
+                        )}
+                      </div>
                     </div>
-                    <h3 className="text-sm font-bold text-gray-900">Bapak Ahmad Rifa'i</h3>
-                    <p className="text-xs text-gray-500">Orang Tua / Wali Santri</p>
-                    <div className="inline-block mt-2 bg-blue-50 text-blue-800 px-3 py-1 rounded-full text-xs font-bold">
-                      Santri Bimbingan: {currentStudent.name}
-                    </div>
-                  </div>
+
+                    <dl className="mt-4 divide-y divide-line border-t border-line text-xs">
+                      <div className="flex items-center justify-between gap-3 py-2">
+                        <dt className="text-muted">Santri terhubung</dt>
+                        <dd className="text-right font-semibold text-ink">
+                          {currentStudent.name} ({currentStudent.kelas})
+                        </dd>
+                      </div>
+                    </dl>
+                  </section>
 
                   <button
+                    type="button"
                     onClick={handleLogout}
-                    className="w-full py-3 bg-red-50 hover:bg-red-100 text-red-600 font-bold text-xs rounded-xl border border-red-200 transition-all flex items-center justify-center gap-2"
+                    className="flex w-full items-center justify-center gap-2 rounded-control border border-danger/25 bg-danger-50 py-3 text-xs font-semibold text-danger hover:bg-danger/10"
                   >
-                    <LogOut className="w-4 h-4" />
-                    <span>Keluar dari Akun Orang Tua</span>
+                    <LogOut className="h-4 w-4" aria-hidden="true" />
+                    Keluar dari akun
                   </button>
                 </div>
               )}
@@ -1859,8 +3004,13 @@ export default function App() {
                   <BookOpen className="w-5 h-5 text-green-300" />
                 </div>
                 <div>
-                  <h2 className="text-sm font-bold leading-tight">Panel Guru / BK</h2>
-                  <span className="text-[11px] text-green-300">SMK Thibbil Qulub</span>
+                  <h2 className="text-sm font-bold leading-tight">Panel {roleLabel(role)}</h2>
+                  <span className="text-xs text-green-300">SMK Thibbil Qulub</span>
+                  {role === 'pembimbing_rayon' && (
+                    <span className="block text-xs text-green-400 mt-0.5">
+                      Rayon: {myRayonId || 'belum diatur'}
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -1883,6 +3033,21 @@ export default function App() {
                 >
                   <PlusCircle className="w-4 h-4" />
                   <span>Input Poin & Prestasi</span>
+                </button>
+
+                <button
+                  onClick={() => setGuruTab('verifikasi')}
+                  className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl transition-all ${
+                    guruTab === 'verifikasi' ? 'bg-[#2E7D32] text-white font-bold shadow-sm' : 'text-green-200 hover:bg-green-800'
+                  }`}
+                >
+                  <UserCheck className="w-4 h-4" />
+                  <span>Verifikasi Prestasi</span>
+                  {pendingPrestasi.length > 0 && (
+                    <span className="ml-auto bg-amber-400 text-amber-950 text-xs font-black px-1.5 py-0.5 rounded-full">
+                      {pendingPrestasi.length}
+                    </span>
+                  )}
                 </button>
 
                 <button
@@ -1913,8 +3078,11 @@ export default function App() {
                   UH
                 </div>
                 <div>
-                  <span className="text-xs font-bold block">Ust. Hendra Gunawan</span>
-                  <span className="text-[10px] text-green-300">Wali Rayon / Guru BK</span>
+                  <span className="text-xs font-bold block">{profile?.fullName || roleLabel(role)}</span>
+                  <span className="text-xs text-green-300">{roleLabel(role)}</span>
+                  <span className="block text-xs text-green-400 truncate max-w-[150px]">
+                    {profile?.email}
+                  </span>
                 </div>
               </div>
               <button
@@ -1944,7 +3112,9 @@ export default function App() {
                     <div>
                       <span className="text-xs font-medium text-gray-500">Total Santri Aktif</span>
                       <div className="text-2xl font-bold text-[#1B5E20] mt-1">{students.length} Siswa</div>
-                      <span className="text-[11px] text-green-600 font-semibold">100% Mengisi BKP</span>
+                      <span className="text-xs text-green-600 font-semibold">
+                        {myRayonId ? `Rayon ${myRayonId}` : 'Seluruh rayon'}
+                      </span>
                     </div>
                     <div className="w-12 h-12 rounded-2xl bg-green-50 flex items-center justify-center text-[#2E7D32]">
                       <Users className="w-6 h-6" />
@@ -1954,8 +3124,8 @@ export default function App() {
                   <div className="bg-white p-5 rounded-2xl shadow-sm border border-green-100 flex items-center justify-between">
                     <div>
                       <span className="text-xs font-medium text-gray-500">Poin Apresiasi Hari Ini</span>
-                      <div className="text-2xl font-bold text-[#2E7D32] mt-1">+950 Pts</div>
-                      <span className="text-[11px] text-emerald-600 font-semibold">Rutin Tahajud & Dhuha</span>
+                      <div className="text-2xl font-bold text-[#2E7D32] mt-1">+{apresiasiHariIni} Pts</div>
+                      <span className="text-xs text-emerald-600 font-semibold">Dari catatan poin terbaru</span>
                     </div>
                     <div className="w-12 h-12 rounded-2xl bg-emerald-50 flex items-center justify-center text-emerald-600">
                       <Sparkles className="w-6 h-6" />
@@ -1964,9 +3134,9 @@ export default function App() {
 
                   <div className="bg-white p-5 rounded-2xl shadow-sm border border-green-100 flex items-center justify-between">
                     <div>
-                      <span className="text-xs font-medium text-gray-500">Pelanggaran Minggu Ini</span>
-                      <div className="text-2xl font-bold text-red-600 mt-1">2 Catatan</div>
-                      <span className="text-[11px] text-red-500 font-semibold">Telah ditindaklanjuti</span>
+                      <span className="text-xs font-medium text-gray-500">Konsekuensi 7 Hari Terakhir</span>
+                      <div className="text-2xl font-bold text-red-600 mt-1">{konsekuensiMingguIni} Catatan</div>
+                      <span className="text-xs text-red-500 font-semibold">Dari riwayat poin</span>
                     </div>
                     <div className="w-12 h-12 rounded-2xl bg-red-50 flex items-center justify-center text-red-500">
                       <ShieldAlert className="w-6 h-6" />
@@ -1977,8 +3147,10 @@ export default function App() {
                 {/* TABEL 10 SISWA TERBARU */}
                 <div className="bg-white rounded-2xl shadow-sm border border-green-100 overflow-hidden">
                   <div className="p-4 border-b border-gray-100 flex items-center justify-between">
-                    <h3 className="text-sm font-bold text-gray-800">Daftar Santri & Total Poin Karakter</h3>
-                    <span className="text-xs text-gray-500">10 Santri Terdaftar</span>
+                    <h3 className="text-sm font-bold text-gray-800">Daftar santri dan total poin karakter</h3>
+                    <span className="text-xs text-gray-500">
+                      {students.length} santri terdaftar
+                    </span>
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-xs">
@@ -1993,6 +3165,14 @@ export default function App() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
+                        {students.length === 0 && (
+                          <tr>
+                            <td colSpan={6} className="p-4 text-xs text-muted">
+                              Belum ada santri pada lingkup akun ini. Admin dapat menambah data
+                              santri dari panel admin atau menu Tambah Santri.
+                            </td>
+                          </tr>
+                        )}
                         {students.map((st) => (
                           <tr key={st.id} className="hover:bg-gray-50">
                             <td className="p-3 font-bold text-gray-900">{st.name}</td>
@@ -2001,7 +3181,7 @@ export default function App() {
                             <td className="p-3 font-bold text-[#1B5E20]">{st.points} Pts</td>
                             <td className="p-3">
                               <span
-                                className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                                className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
                                   st.points >= 1000
                                     ? 'bg-green-100 text-green-800'
                                     : 'bg-amber-100 text-amber-800'
@@ -2016,7 +3196,7 @@ export default function App() {
                                   setSelectedStudentId(st.id);
                                   setGuruTab('input_poin');
                                 }}
-                                className="px-2.5 py-1 bg-green-50 hover:bg-green-100 text-green-700 font-semibold rounded-lg border border-green-200 text-[11px]"
+                                className="px-2.5 py-1 bg-green-50 hover:bg-green-100 text-green-700 font-semibold rounded-lg border border-green-200 text-xs"
                               >
                                 + Poin
                               </button>
@@ -2039,7 +3219,7 @@ export default function App() {
                 </div>
 
                 {guruSuccess && (
-                  <div className="p-3.5 bg-green-500 text-white rounded-xl text-xs font-semibold flex items-center gap-2 shadow-sm animate-bounce">
+                  <div className="p-3.5 bg-green-500 text-white rounded-xl text-xs font-semibold flex items-center gap-2 shadow-sm">
                     <CheckCircle2 className="w-5 h-5" />
                     <span>Poin berhasil dicatat dan diakumulasikan ke buku santri!</span>
                   </div>
@@ -2068,13 +3248,13 @@ export default function App() {
                         value={selectedKode}
                         onChange={(e) => {
                           setSelectedKode(e.target.value);
-                          const m = masterKodes.find((item) => item.kode === e.target.value);
+                          const m = effectiveKodes.find((item) => item.kode === e.target.value);
                           if (m) setGuruDeskripsi(m.deskripsi);
                         }}
                         className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-[#2E7D32]"
                       >
                         <optgroup label="Tindakan Terpuji (Apresiasi)">
-                          {masterKodes
+                          {effectiveKodes
                             .filter((m) => m.tipe === 'apresiasi')
                             .map((m) => (
                               <option key={m.kode} value={m.kode}>
@@ -2083,7 +3263,7 @@ export default function App() {
                             ))}
                         </optgroup>
                         <optgroup label="Tindakan Kurang Terpuji (Konsekuensi)">
-                          {masterKodes
+                          {effectiveKodes
                             .filter((m) => m.tipe === 'konsekuensi')
                             .map((m) => (
                               <option key={m.kode} value={m.kode}>
@@ -2116,6 +3296,136 @@ export default function App() {
               </div>
             )}
 
+            {/* 2b. GURU: VERIFIKASI PRESTASI */}
+            {guruTab === 'verifikasi' && (
+              <div className="space-y-5 max-w-3xl mx-auto">
+                <div>
+                  <h1 className="text-xl font-bold text-gray-900">Verifikasi Prestasi Santri</h1>
+                  <p className="text-xs text-gray-500">
+                    Setujui dengan menentukan poin, atau tolak dengan catatan. Setiap keputusan
+                    tercatat di audit log dan tidak bisa dihapus.
+                  </p>
+                </div>
+
+                {pendingPrestasi.length === 0 && (
+                  <div className="bg-white rounded-2xl border border-green-100 p-4 text-xs text-gray-500">
+                    Tidak ada pengajuan yang menunggu verifikasi.
+                  </div>
+                )}
+
+                {pendingPrestasi.map((pres) => {
+                  const santri = students.find((s) => s.id === pres.siswa_id);
+                  return (
+                    <div
+                      key={pres.id}
+                      className="bg-white rounded-2xl border border-amber-200 shadow-sm p-4 space-y-3 text-xs"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <span className="font-bold text-gray-900 block">{pres.judul}</span>
+                          <span className="text-gray-500 block">
+                            {santri?.name ?? pres.siswa_id} • {santri?.kelas ?? '-'} • Rayon{' '}
+                            {pres.rayon}
+                          </span>
+                          <span className="text-gray-400 block">
+                            {pres.kategori} • {pres.tingkat} • {pres.capaian} • {pres.tanggal}
+                          </span>
+                          {pres.deskripsi && (
+                            <p className="text-gray-600 mt-1">{pres.deskripsi}</p>
+                          )}
+                        </div>
+                        <span className="text-xs font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-md shrink-0">
+                          PENDING
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-[120px_1fr] gap-2">
+                        <div>
+                          <label className="block font-semibold text-gray-700 mb-1">Poin disetujui</label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={5000}
+                            value={verifyPoin[pres.id] ?? 100}
+                            onChange={(e) =>
+                              setVerifyPoin({ ...verifyPoin, [pres.id]: Number(e.target.value) })
+                            }
+                            className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-[#2E7D32]"
+                          />
+                        </div>
+                        <div>
+                          <label className="block font-semibold text-gray-700 mb-1">Catatan verifikasi</label>
+                          <input
+                            type="text"
+                            value={verifyCatatan[pres.id] ?? ''}
+                            onChange={(e) =>
+                              setVerifyCatatan({ ...verifyCatatan, [pres.id]: e.target.value })
+                            }
+                            placeholder="Opsional, mis. bukti sertifikat kurang"
+                            className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-[#2E7D32]"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={verifyingId === pres.id}
+                          onClick={() => handleVerifyPrestasi(pres, 'verified')}
+                          className="flex-1 min-w-[160px] py-2.5 bg-[#2E7D32] hover:bg-[#1B5E20] disabled:bg-gray-300 text-white font-bold rounded-xl flex items-center justify-center gap-1.5"
+                        >
+                          <CheckCircle2 className="w-4 h-4" />
+                          {verifyingId === pres.id ? 'Memproses…' : 'Verifikasi & Beri Poin'}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={verifyingId === pres.id}
+                          onClick={() => handleVerifyPrestasi(pres, 'rejected')}
+                          className="px-4 py-2.5 bg-red-50 hover:bg-red-100 disabled:opacity-50 text-red-700 font-bold rounded-xl border border-red-200 flex items-center justify-center gap-1.5"
+                        >
+                          <AlertTriangle className="w-4 h-4" /> Tolak
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                <div className="space-y-2">
+                  <h2 className="text-xs font-bold uppercase tracking-wider text-gray-500 px-1">
+                    Riwayat keputusan
+                  </h2>
+                  {prestasiList.filter((p) => p.status !== 'pending').length === 0 && (
+                    <p className="text-xs text-gray-400 px-1">Belum ada keputusan.</p>
+                  )}
+                  {prestasiList
+                    .filter((p) => p.status !== 'pending')
+                    .map((pres) => (
+                      <div
+                        key={pres.id}
+                        className="bg-white rounded-xl border border-gray-200 p-3 text-xs flex items-start justify-between gap-2"
+                      >
+                        <div>
+                          <span className="font-semibold text-gray-800 block">{pres.judul}</span>
+                          <span className="text-gray-500 block">
+                            {students.find((s) => s.id === pres.siswa_id)?.name ?? pres.siswa_id} •{' '}
+                            {pres.tanggal}
+                          </span>
+                        </div>
+                        <span
+                          className={`text-xs font-bold px-2 py-0.5 rounded-md shrink-0 ${
+                            pres.status === 'verified'
+                              ? 'bg-green-100 text-green-800'
+                              : 'bg-red-100 text-red-700'
+                          }`}
+                        >
+                          {pres.status === 'verified' ? `+${pres.poin} Pts` : 'Ditolak'}
+                        </span>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
+
             {/* 3. GURU: BORANG KESEHATAN / UKS */}
             {guruTab === 'kesehatan' && (
               <div className="space-y-6 max-w-4xl mx-auto">
@@ -2141,11 +3451,7 @@ export default function App() {
                   </div>
                 </div>
 
-                <BorangKesehatanView
-                  role="guru"
-                  studentName={currentStudent.name}
-                  studentKelas={`${currentStudent.kelas} / ${currentStudent.rayon}`}
-                />
+                <ModulBelumTersedia judul="Borang kesehatan dan buku UKS" />
               </div>
             )}
 
@@ -2153,14 +3459,25 @@ export default function App() {
             {guruTab === 'siswa' && (
               <div className="space-y-4 max-w-5xl mx-auto">
                 <div className="flex items-center justify-between">
-                  <h1 className="text-xl font-bold text-gray-900">Direktori Santri Rayon Assimbani</h1>
-                  <input
-                    type="text"
-                    placeholder="Cari siswa / rombel..."
-                    value={studentSearch}
-                    onChange={(e) => setStudentSearch(e.target.value)}
-                    className="p-2 text-xs bg-white border border-gray-200 rounded-xl w-60 outline-none"
-                  />
+                  <h1 className="text-xl font-bold text-gray-900">Direktori Santri Rayon Assimbani</h1>                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          placeholder="Cari siswa / rombel..."
+                          value={studentSearch}
+                          onChange={(e) => setStudentSearch(e.target.value)}
+                          className="p-2 text-xs bg-white border border-gray-200 rounded-xl w-60 outline-none"
+                        />
+                        {canCreateStudent(role) && (
+                          <button
+                            type="button"
+                            onClick={() => setShowTambahSiswa(true)}
+                            className="px-3 py-2 bg-[#2E7D32] hover:bg-[#1B5E20] text-white text-xs font-bold rounded-xl shadow-sm flex items-center gap-1.5"
+                          >
+                            <PlusCircle className="w-3.5 h-3.5" />
+                            <span>Tambah Santri</span>
+                          </button>
+                        )}
+                      </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
@@ -2189,7 +3506,28 @@ export default function App() {
               </div>
             )}
           </main>
+
+          <TambahSiswaModal
+            isOpen={showTambahSiswa}
+            onClose={() => setShowTambahSiswa(false)}
+            onStudentAdded={() => setShowTambahSiswa(false)}
+            actorRole={role ?? undefined}
+            actor={sessionUser ? { uid: sessionUser.uid, email: sessionUser.email } : null}
+          />
         </div>
+      )}
+
+      {/* ═══════════════════════════════════════════ */}
+      {/* 5. PANEL ADMIN (ROLE: admin)                */}
+      {/* ═══════════════════════════════════════════ */}
+      {currentRoute === 'admin' && (
+        <Suspense fallback={<MemuatPanel label="panel admin" />}>
+          <AdminPanel
+            profile={profile}
+            onLogout={handleLogout}
+            onOpenStaffDashboard={() => setCurrentRoute('guru')}
+          />
+        </Suspense>
       )}
     </div>
   );

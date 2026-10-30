@@ -27,20 +27,30 @@ app.get('/api/health', (_req: Request, res: Response) => {
   });
 });
 
-// Determine static build output directory (check dist first, fallback to build or root)
+// Tentukan direktori hasil build (dist lebih dulu, lalu build).
+// Jangan pernah fallback ke __dirname: index.html di root adalah template Vite
+// yang memuat /src/main.tsx dan akan tampil sebagai halaman kosong di produksi.
 const distPath = path.resolve(__dirname, 'dist');
 const buildPath = path.resolve(__dirname, 'build');
-const staticDir = fs.existsSync(distPath) ? distPath : (fs.existsSync(buildPath) ? buildPath : __dirname);
+const staticDir = fs.existsSync(distPath)
+  ? distPath
+  : fs.existsSync(buildPath)
+    ? buildPath
+    : null;
 
-app.use(express.static(staticDir));
+if (staticDir) {
+  app.use(express.static(staticDir));
+}
 
-// SPA fallback routing
+// SPA fallback routing — gagal keras jika build belum ada.
 app.all(/.*/, (req: Request, res: Response) => {
-  const indexPath = path.join(staticDir, 'index.html');
-  if (fs.existsSync(indexPath)) {
+  const indexPath = staticDir ? path.join(staticDir, 'index.html') : null;
+  if (indexPath && fs.existsSync(indexPath)) {
     res.sendFile(indexPath);
   } else {
-    res.status(404).send('BKP Digital application build not found. Please run npm run build.');
+    res
+      .status(503)
+      .send('BKP Digital: hasil build belum tersedia. Jalankan `npm run build` sebelum `npm start`.');
   }
 });
 
