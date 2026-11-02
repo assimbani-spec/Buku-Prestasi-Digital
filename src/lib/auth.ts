@@ -102,10 +102,48 @@ function emit(user: AppUser | null): void {
   });
 }
 
+/**
+ * Sesi lokal hanya sah bila profilnya masih ada, belum dinonaktifkan, dan
+ * masih punya kata sandi. Pemeriksaan ini dijalankan setiap sesi dipulihkan
+ * supaya akun yang dinonaktifkan admin langsung kehilangan akses, bukan
+ * menunggu masa sesi 12 jam habis. Bila profil tidak bisa dibaca karena galat
+ * penyimpanan, sesi dibiarkan agar pengguna tidak terkunci oleh gangguan
+ * sementara; pemeriksaan berikutnya akan mencoba lagi.
+ */
+async function sesiLokalSah(user: AppUser | null): Promise<AppUser | null> {
+  if (!user) return null;
+  try {
+    const snap = await getDoc(doc(null as unknown as never, 'profiles', user.uid));
+    if (!snap.exists()) return null;
+    const data = snap.data() as Record<string, any>;
+    if (data.active === false) return null;
+    if (!data.passwordHash) return null;
+    return {
+      uid: user.uid,
+      email: data.email ?? user.email,
+      displayName: data.fullName ?? user.displayName,
+    };
+  } catch {
+    return user;
+  }
+}
+
+function hapusSesiLokal(): void {
+  try {
+    writeLocalSession(null);
+  } catch {
+    /* penyimpanan menolak, sesi tetap kedaluwarsa sendiri */
+  }
+}
+
 if (typeof window !== 'undefined') {
   window.addEventListener('storage', (event) => {
     if (event.key === SESSION_KEY || LEGACY_SESSION_KEYS.includes(event.key ?? '')) {
-      emit(readLocalSession());
+      const sesi = readLocalSession();
+      void sesiLokalSah(sesi).then((sah) => {
+        if (!sah && sesi) hapusSesiLokal();
+        emit(sah);
+      });
     }
   });
 }
@@ -114,8 +152,17 @@ if (typeof window !== 'undefined') {
 export function watchAuthUser(callback: Listener): () => void {
   if (isLocalBackend) {
     listeners.add(callback);
-    callback(readLocalSession());
-    return () => listeners.delete(callback);
+    let stopped = false;
+    const awal = readLocalSession();
+    void sesiLokalSah(awal).then((sah) => {
+      if (stopped) return;
+      if (!sah && awal) hapusSesiLokal();
+      callback(sah);
+    });
+    return () => {
+      stopped = true;
+      listeners.delete(callback);
+    };
   }
 
   let stopped = false;
@@ -200,6 +247,11 @@ export async function refreshLocalSessionUser(uid: string): Promise<void> {
     return;
   }
   const data = snap.data() as Record<string, any>;
+  if (data.active === false || !data.passwordHash) {
+    hapusSesiLokal();
+    emit(null);
+    return;
+  }
   const user: AppUser = {
     uid,
     email: data.email ?? null,

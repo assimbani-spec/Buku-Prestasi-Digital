@@ -184,6 +184,24 @@ await test('akun nonaktif tidak bisa masuk walau kata sandinya benar', async () 
   );
 });
 
+await test('sesi akun yang dinonaktifkan dicabut saat dipulihkan', async () => {
+  await setDoc(
+    doc(null as unknown as never, 'profiles', 'u-guru-baru'),
+    { active: true },
+    { merge: true }
+  );
+  await signInWithEmail('guru.baru@lokal.test', 'guruBaru2026');
+  assert.equal(await currentUid(), 'u-guru-baru');
+
+  await setDoc(
+    doc(null as unknown as never, 'profiles', 'u-guru-baru'),
+    { active: false },
+    { merge: true }
+  );
+  assert.equal(await currentUid(), null, 'sesi akun nonaktif tidak boleh dipakai');
+  assert.equal(storage.getItem('bkp.localsession.v4'), null, 'sesi harus dicabut');
+});
+
 await test('keluar menghapus sesi', async () => {
   await signInWithEmail('admin@lokal.test', LOCAL_SEED_PASSWORD);
   await signOutUser();

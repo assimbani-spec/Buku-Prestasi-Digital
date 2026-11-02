@@ -21,8 +21,12 @@ service cloud.firestore {
       return /databases/$(database)/documents/profiles/$(uid);
     }
 
+    // Profil nonaktif kehilangan seluruh hak peran. Profil lama tanpa field
+    // `active` tetap dianggap aktif agar akun yang sudah ada tidak terkunci.
     function hasProfile() {
-      return isSignedIn() && exists(profileRef(myUid()));
+      return isSignedIn()
+        && exists(profileRef(myUid()))
+        && get(profileRef(myUid())).data.get('active', true) == true;
     }
 
     function prof() {
@@ -98,7 +102,8 @@ service cloud.firestore {
       // Hanya admin yang boleh mengubah role / penautan / total_poin.
       // Pemilik hanya boleh menyunting data kontak & nama tampilan.
       allow update: if isAdmin()
-        || (myUid() == userId
+        || (hasProfile()
+            && myUid() == userId
             && request.resource.data.diff(resource.data).affectedKeys()
                  .hasOnly(['fullName', 'phone', 'avatarUrl', 'updatedAt']));
 
@@ -136,13 +141,20 @@ service cloud.firestore {
             && request.resource.data.rayon == resource.data.rayon
             && request.resource.data.diff(resource.data).affectedKeys()
                  .hasOnly(['points', 'updatedAt']))
-        // Siswa: hanya menambah poin hariannya sendiri, maksimal +100 sekali tulis.
+        // Siswa: hanya menambah poin hariannya sendiri, maksimal +100 sekali
+        // tulis, untuk tanggal yang belum punya jurnal. Ini menutup klik
+        // berulang pada tanggal yang sama; koreksi tetap dilakukan staf.
         || (isSiswa()
             && myStudentId() == studentId
             && request.resource.data.diff(resource.data).affectedKeys()
                  .hasOnly(['points', 'updatedAt', 'lastJournalDate'])
             && request.resource.data.points >= resource.data.points
-            && request.resource.data.points <= resource.data.points + 100);
+            && request.resource.data.points <= resource.data.points + 100
+            && request.resource.data.lastJournalDate is string
+            && request.resource.data.lastJournalDate.matches('^\\d{4}-\\d{2}-\\d{2}$')
+            && (!('lastJournalDate' in resource.data)
+                || request.resource.data.lastJournalDate != resource.data.lastJournalDate)
+            && !exists(/databases/$(database)/documents/pembiasaan_harian/$(myUid() + '_' + request.resource.data.lastJournalDate)));
 
       allow delete: if isAdmin();
     }
@@ -156,11 +168,20 @@ service cloud.firestore {
         || (isSiswa() && jurnalId.split('_')[0] == myUid())
         || (isOrtu() && resource.data.student_id in myChildIds());
 
-      allow create, update: if isGuruOrAdmin()
+      // Siswa hanya boleh membuat jurnal baru, tidak menimpa jurnal yang sudah
+      // ada. Dengan begitu satu tanggal tidak bisa menambah poin dua kali.
+      allow create: if isGuruOrAdmin()
         || (isPembimbing() && request.resource.data.rayon == myRayon())
         || (isSiswa()
             && jurnalId.split('_')[0] == myUid()
-            && request.resource.data.student_id == myStudentId());
+            && request.resource.data.student_id == myStudentId()
+            && request.resource.data.tanggal is string
+            && request.resource.data.poin_harian is number
+            && request.resource.data.poin_harian >= 0
+            && request.resource.data.poin_harian <= 60);
+
+      allow update: if isGuruOrAdmin()
+        || (isPembimbing() && request.resource.data.rayon == myRayon());
 
       allow delete: if isGuruOrAdmin();
     }
@@ -285,11 +306,11 @@ service cloud.firestore {
     }
 
     // ════════════════════════════════════════════════════════════════
-    // Audit log — append-only, tidak bisa diubah/dihapus siapa pun
+    // Audit log: append-only, tidak bisa diubah/dihapus siapa pun
     // ════════════════════════════════════════════════════════════════
     match /audit_log/{logId} {
       allow read: if isGuruOrAdmin();
-      allow create: if isSignedIn()
+      allow create: if hasProfile()
         && request.resource.data.actorId == myUid()
         && request.resource.data.action is string
         && request.resource.data.createdAt == request.time;
@@ -297,7 +318,7 @@ service cloud.firestore {
     }
 
     // ════════════════════════════════════════════════════════════════
-    // Master data — dibaca semua staf & siswa, ditulis hanya admin
+    // Master data: dibaca semua staf & siswa, ditulis hanya admin
     // ════════════════════════════════════════════════════════════════
     match /master_kelas/{kelasId} {
       allow read: if isSignedIn();

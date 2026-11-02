@@ -176,6 +176,8 @@ export default function App() {
   // Siswa State
   const [siswaDate, setSiswaDate] = useState(new Date().toISOString().split('T')[0]);
   const [siswaSaveSuccess, setSiswaSaveSuccess] = useState(false);
+  const [jurnalSaving, setJurnalSaving] = useState(false);
+  const jurnalSavingRef = useRef(false);
   const [jurnalView, setJurnalView] = useState<'harian' | 'mingguan' | 'non_rutin' | 'kesehatan'>('harian');
   const [poinTabFilter, setPoinTabFilter] = useState<'semua' | 'prestasi' | 'apresiasi' | 'konsekuensi'>('semua');
   
@@ -553,6 +555,14 @@ export default function App() {
       snap = await getDoc(ref);
     }
     const data = snap.data() as UserProfile;
+
+    // Profil yang dinonaktifkan admin tidak boleh dipakai lagi, meskipun
+    // token Firebase masih sah. Sesi lokal diperiksa di lapisan auth.
+    if ((data as { active?: boolean }).active === false) {
+      await signOutUser();
+      throw new Error('Akun ini dinonaktifkan. Hubungi admin sekolah.');
+    }
+
     setProfile(data);
 
     // Peringatan penautan agar admin tahu profil mana yang belum lengkap.
@@ -1087,6 +1097,11 @@ export default function App() {
     const dailyPts = calculateDailyPoints();
     setSiswaSaveSuccess(false);
     const jurnalId = `${sessionUser.uid}_${siswaDate}`;
+    const jurnalRef = doc(db, 'pembiasaan_harian', jurnalId);
+
+    if (jurnalSavingRef.current) return;
+    jurnalSavingRef.current = true;
+    setJurnalSaving(true);
 
     const payload = {
       siswa_id: sessionUser.uid,
@@ -1116,12 +1131,23 @@ export default function App() {
     };
 
     try {
+      // Idempoten: satu tanggal hanya boleh menambah poin sekali. Jurnal yang
+      // sudah ada tidak ditimpa dan poin tidak ditambah lagi, sehingga klik
+      // berulang atau dua tab sekaligus tidak menggandakan poin.
+      const existing = await getDoc(jurnalRef);
+      if (existing.exists() && role === 'siswa') {
+        setErrorMsg(
+          'Jurnal tanggal ini sudah tersimpan. Hubungi guru atau pembimbing rayon untuk koreksi.'
+        );
+        return;
+      }
+
       // Jurnal, saldo poin, dan audit log ditulis atomik: kalau salah satu
       // ditolak rules, seluruh operasi batal (tidak ada data separuh jadi).
       const batch = writeBatch(db);
-      batch.set(doc(db, 'pembiasaan_harian', jurnalId), payload);
+      batch.set(jurnalRef, payload);
       batch.update(doc(db, 'students', currentStudent.id), {
-        points: increment(dailyPts),
+        ...(existing.exists() ? {} : { points: increment(dailyPts) }),
         lastJournalDate: siswaDate,
         updatedAt: serverTimestamp(),
       });
@@ -1147,6 +1173,9 @@ export default function App() {
       setErrorMsg(
         'Gagal menyimpan jurnal: ' + (err instanceof Error ? err.message : String(err))
       );
+    } finally {
+      jurnalSavingRef.current = false;
+      setJurnalSaving(false);
     }
   };
 
@@ -2001,10 +2030,15 @@ export default function App() {
 
                       <button
                         onClick={saveJurnal}
-                        className="w-full py-3.5 bg-[#2E7D32] hover:bg-[#1B5E20] text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2"
+                        disabled={jurnalSaving}
+                        className="w-full py-3.5 bg-[#2E7D32] hover:bg-[#1B5E20] text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         <Save className="w-4 h-4" />
-                        <span>Simpan Jurnal Harian (+{calculateDailyPoints()} Pts)</span>
+                        <span>
+                          {jurnalSaving
+                            ? 'Menyimpan...'
+                            : `Simpan Jurnal Harian (+${calculateDailyPoints()} Pts)`}
+                        </span>
                       </button>
                     </div>
                   )}
@@ -2066,10 +2100,11 @@ export default function App() {
 
                       <button
                         onClick={saveJurnal}
-                        className="w-full py-3.5 bg-[#2E7D32] hover:bg-[#1B5E20] text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2"
+                        disabled={jurnalSaving}
+                        className="w-full py-3.5 bg-[#2E7D32] hover:bg-[#1B5E20] text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         <Save className="w-4 h-4" />
-                        <span>Simpan Pembiasaan Pekanan</span>
+                        <span>{jurnalSaving ? 'Menyimpan...' : 'Simpan Pembiasaan Pekanan'}</span>
                       </button>
                     </div>
                   )}

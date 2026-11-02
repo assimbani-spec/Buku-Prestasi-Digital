@@ -61,6 +61,8 @@ npm start                        # server.js, default port 3000
 - [ ] `npm run test:local`, `test:auth`, `test:siswa`, `test:prestasi` lulus.
 - [ ] Proyek Firebase sudah milik sekolah, bukan proyek contoh, dan `firestore.rules` sudah di-deploy: `firebase deploy --only firestore:rules`.
 - [ ] Jalankan `tests/firestore-rules.test.mjs` dengan Firebase Emulator setelah perubahan aturan.
+- [ ] Uji akun nonaktif: setelah admin menonaktifkan profil, akun itu tidak bisa membaca atau menulis data. Untuk pencabutan penuh, nonaktifkan juga akunnya di Firebase Authentication.
+- [ ] Uji simpan jurnal dua kali pada tanggal yang sama: poin hanya bertambah sekali.
 - [ ] Uji login tiap peran dan pastikan data per peran tidak bocor.
 - [ ] Uji dua akun berbeda: wali A tidak bisa membaca anak wali B.
 - [ ] Ganti kata sandi akun admin awal.
@@ -73,4 +75,5 @@ npm start                        # server.js, default port 3000
 - Adapter Supabase dan D1 belum ada; baru skemanya.
 - Pembuatan akun lintas backend masih manual.
 - Belum ada pengujian browser otomatis (end-to-end).
+- Poin harian masih dihitung di klien. Siswa yang memanggil SDK langsung dengan tanggal berbeda masih bisa menambah poin, jadi perhitungan resmi perlu dipindahkan ke server sebelum data dipakai untuk penghargaan.
 - Panel admin belum bisa mengubah data santri yang sudah ada, baru menambah.
