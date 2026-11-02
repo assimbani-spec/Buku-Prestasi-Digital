@@ -6,7 +6,7 @@
 import React, { useState } from 'react';
 import { UserPlus, X, Save, AlertCircle, CheckCircle2, School, User, Phone, Mail, Award, MapPin } from 'lucide-react';
 import { db } from '../lib/data';
-import type { StudentRecord } from '../lib/firebase';
+import type { StudentRecord } from '../lib/tipe';
 import { doc, serverTimestamp, writeBatch } from '../lib/data';
 import { buildAuditPayload, newAuditRef } from '../lib/audit';
 

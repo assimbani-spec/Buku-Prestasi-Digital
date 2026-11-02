@@ -199,11 +199,26 @@ async function run(): Promise<void> {
     assert.ok(first?.createdAt === undefined || first.createdAt instanceof LocalTimestamp);
   });
 
-  await test('seed lokal membuat 5 profil dan tidak berulang', async () => {
+  await test('admin awal dibuat sekali saat basis data kosong', async () => {
     clearLocalDatabase();
-    const { ensureLocalSeed, LOCAL_ACCOUNTS } = await import('../src/lib/data/seed');
-    await ensureLocalSeed();
-    await ensureLocalSeed();
+    const { pastikanAdminAwal } = await import('../src/lib/data/seed');
+    await pastikanAdminAwal();
+    await pastikanAdminAwal();
+
+    const profiles = await getDocsOf(query(collection(db, 'profiles')));
+    assert.equal(profiles.length, 1, 'hanya satu akun admin yang boleh dibuat');
+    assert.equal(profiles[0].role, 'admin');
+    assert.ok(profiles[0].passwordHash, 'akun admin wajib punya hash sandi');
+
+    const santri = await getDocsOf(query(collection(db, 'students')));
+    assert.equal(santri.length, 0, 'tanpa seed demo tidak boleh ada santri contoh');
+  });
+
+  await test('seed demo membuat 5 profil dan tidak berulang', async () => {
+    clearLocalDatabase();
+    const { seedDemo, LOCAL_ACCOUNTS } = await import('../src/lib/data/seedDemo');
+    await seedDemo();
+    await seedDemo();
 
     assert.equal(LOCAL_ACCOUNTS.length, 5);
     for (const account of LOCAL_ACCOUNTS) {

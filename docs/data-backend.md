@@ -34,9 +34,12 @@ Nilai lain dianggap `local` supaya salah tulis tidak diam-diam menembak server.
   `passwordSalt`, dan `passwordIterations`. Tidak ada teks kata sandi.
 - Administrator membuat akun dari panel admin, menu Pengguna. Aksi itu menulis
   `profiles` dan entri audit `user_create` dalam satu batch.
-- Data contoh dibuat sekali oleh `ensureLocalSeed()`: 5 profil (satu per peran,
-  kata sandi awal `bkp12345`), 4 santri, 4 entri poin, 1 pengajuan prestasi
-  pending, 2 notifikasi, dan beberapa master kelas/rayon. Semua fiktif.
+- Basis data kosong mendapat satu akun administrator (`pastikanAdminAwal`,
+  kata sandi awal `bkp12345`). Akun lain dibuat dari panel admin.
+- Data contoh hanya dimuat bila `VITE_LOCAL_SEED=demo` lewat `seedDemo()` yang
+  diimpor dinamis: 5 profil (satu per peran), 4 santri, 4 entri poin, 1
+  pengajuan prestasi pending, 2 notifikasi, dan beberapa master kelas/rayon.
+  Semua fiktif, dan tidak ikut ke bundel utama saat flag tidak disetel.
 - "Hapus data lokal dan mulai ulang" di halaman login menghapus seluruh isi.
 - Firebase tidak diinisialisasi selama backend lokal aktif: `firebaseApp()`,
   `firebaseAuth()`, dan `firebaseDb()` baru membuat koneksi saat dipanggil.
@@ -121,8 +124,8 @@ D1 hanya bisa diakses dari Worker, jadi aplikasi memerlukan Worker perantara
 - `POST /api/prestasi`, `PATCH /api/prestasi/:id`
 - `POST /api/audit`
 
-Skema D1 mengikuti `supabase/migration.sql` dengan penyesuaian tipe
-(`TEXT` untuk id, `INTEGER` untuk poin, `INTEGER` epoch milidetik untuk waktu).
+Skema D1 mengikuti pemetaan koleksi di atas, dengan penyesuaian tipe:
+`TEXT` untuk id, `INTEGER` untuk poin, `INTEGER` epoch milidetik untuk waktu.
 Transaksi memakai `db.batch([...])`, sedangkan `onSnapshot` diganti polling
 berkala atau Durable Object + WebSocket. Aturan akses ditegakkan di Worker
 berdasarkan sesi, bukan di peramban; jangan pernah menerima `user_id` dari

@@ -37,7 +37,7 @@ setStorageForTests(storage as unknown as Storage);
 const { hashPassword, verifyPassword, normalizeEmail, MIN_PASSWORD_LENGTH } = await import(
   '../src/lib/localAuth'
 );
-const { ensureLocalSeed, LOCAL_SEED_PASSWORD } = await import('../src/lib/data/seed');
+const { pastikanAdminAwal, LOCAL_SEED_PASSWORD } = await import('../src/lib/data/seed');
 const { signInWithEmail, signOutUser, watchAuthUser, resetLocalData } = await import(
   '../src/lib/auth'
 );
@@ -100,8 +100,8 @@ await test('normalizeEmail merapikan spasi dan huruf besar', () => {
   assert.equal(normalizeEmail('  Admin@Lokal.Test '), 'admin@lokal.test');
 });
 
-await test('seed membuat akun admin yang bisa masuk dengan kata sandi awal', async () => {
-  await ensureLocalSeed();
+await test('admin awal bisa masuk dengan kata sandi awal', async () => {
+  await pastikanAdminAwal();
   await signInWithEmail('Admin@Lokal.test', LOCAL_SEED_PASSWORD);
   assert.equal(await currentUid(), 'lokal-admin');
 });

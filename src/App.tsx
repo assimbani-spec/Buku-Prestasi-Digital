@@ -9,7 +9,7 @@ import BottomNav, { NavTab } from './components/BottomNav';
 import TambahSiswaModal from './components/TambahSiswaModal';
 import DetailSiswaModal from './components/DetailSiswaModal';
 import SignatureCanvas from 'react-signature-canvas';
-import type { UserProfile, StudentRecord, PrestasiRecord } from './lib/firebase';
+import type { UserProfile, StudentRecord, PrestasiRecord } from './lib/tipe';
 import {
   isLocalBackend,
   resetLocalData,
@@ -18,7 +18,7 @@ import {
   watchAuthUser,
   type AppUser,
 } from './lib/auth';
-import { LOCAL_SEED_PASSWORD, ensureLocalSeed } from './lib/data/seed';
+import { LOCAL_SEED_PASSWORD, siapkanDataAwal } from './lib/data/seed';
 import { 
   db,
   doc, 
@@ -49,6 +49,7 @@ import {
   profileRayonId
 } from './lib/rbac';
 import { logAuditSafe, newAuditRef, buildAuditPayload } from './lib/audit';
+import { ajukanPrestasi, putuskanPrestasi } from './features/prestasi/prestasi';
 
 // Panel admin dan laporan (membawa recharts) hanya dimuat saat dibutuhkan,
 // supaya siswa dan guru tidak mengunduh kode yang tidak mereka pakai.
@@ -575,8 +576,9 @@ export default function App() {
     let stopped = false;
     let unsub: (() => void) | undefined;
 
-    // Mode lokal: data contoh dibuat sekali sebelum sesi dipulihkan.
-    ensureLocalSeed()
+    // Mode lokal: akun admin awal (dan data demo bila diminta) disiapkan
+    // sebelum sesi dipulihkan.
+    siapkanDataAwal()
       .catch(() => {
         /* kegagalan seed tidak mengunci layar; galat muncul saat baca data */
       })
@@ -1364,58 +1366,33 @@ export default function App() {
   };
 
   // ── Alur pengajuan prestasi ─────────────────────────────────────
-  // Siswa mengirim pengajuan (status pending, poin 0). Field status/poin/
-  // verifiedBy tidak dikirim sama sekali, dan rules menolak jika dikirim.
+  // Aturan status, poin, dan audit ada di module prestasi; handler hanya
+  // meneruskan isian form dan menampilkan hasilnya.
   const handleSubmitPrestasi = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!sessionUser || !auditActor) {
+    if (!auditActor) {
       setErrorMsg('Sesi berakhir. Silakan masuk kembali.');
-      return;
-    }
-    if (!currentStudent.id) {
-      setErrorMsg('Data santri belum tertaut ke akun ini. Hubungi Guru / BK.');
-      return;
-    }
-    if (!prestasiForm.judul.trim() || !prestasiForm.capaian.trim()) {
-      setErrorMsg('Judul prestasi dan capaian wajib diisi.');
       return;
     }
 
     setPrestasiSubmitting(true);
     setPrestasiMsg(null);
 
-    const payload = {
-      siswa_id: currentStudent.id,
-      rayon: currentStudent.rayon,
-      judul: prestasiForm.judul.trim(),
-      kategori: prestasiForm.kategori,
-      tingkat: prestasiForm.tingkat,
-      capaian: prestasiForm.capaian.trim(),
-      tanggal: prestasiForm.tanggal,
-      deskripsi: prestasiForm.deskripsi.trim(),
-      status: 'pending' as const,
-      poin: 0,
-      createdBy: sessionUser.uid,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    };
-
     try {
-      const ref = await addDoc(collection(db, 'prestasi'), payload);
-      const warn = await logAuditSafe({
-        actor: auditActor,
-        action: 'prestasi_submit',
-        collectionName: 'prestasi',
-        docId: ref.id,
-        siswaId: currentStudent.id,
-        rayon: currentStudent.rayon,
-        after: payload,
-      });
-      setPrestasiMsg(
-        warn
-          ? 'Prestasi tersimpan, tetapi audit log gagal: ' + warn
-          : 'Pengajuan prestasi terkirim. Menunggu verifikasi guru / pembimbing rayon.'
+      await ajukanPrestasi(
+        {
+          siswaId: currentStudent.id,
+          rayon: currentStudent.rayon,
+          judul: prestasiForm.judul,
+          kategori: prestasiForm.kategori,
+          tingkat: prestasiForm.tingkat,
+          capaian: prestasiForm.capaian,
+          tanggal: prestasiForm.tanggal,
+          deskripsi: prestasiForm.deskripsi,
+        },
+        auditActor
       );
+      setPrestasiMsg('Pengajuan prestasi terkirim. Menunggu verifikasi guru / pembimbing rayon.');
       setPrestasiForm((prev) => ({ ...prev, judul: '', capaian: '', deskripsi: '' }));
       setShowFormPrestasi(false);
     } catch (err) {
@@ -1433,61 +1410,29 @@ export default function App() {
     pres: PrestasiRecord,
     decision: 'verified' | 'rejected'
   ) => {
-    if (!sessionUser || !auditActor) {
+    if (!auditActor) {
       setErrorMsg('Sesi berakhir. Silakan masuk kembali.');
       return;
     }
-    if (!canVerifyPrestasi(role)) {
-      setErrorMsg('Hanya guru, pembimbing rayon, atau admin yang dapat memverifikasi.');
-      return;
-    }
-    if (pres.status !== 'pending') {
-      setErrorMsg('Pengajuan ini sudah diproses.');
-      return;
-    }
 
-    const poin = decision === 'verified' ? Number(verifyPoin[pres.id] ?? 100) : 0;
-    if (decision === 'verified' && (!Number.isFinite(poin) || poin <= 0 || poin > 5000)) {
-      setErrorMsg('Poin verifikasi harus berupa angka antara 1 dan 5000.');
-      return;
-    }
-
-    const catatan = verifyCatatan[pres.id] ?? '';
     setVerifyingId(pres.id);
-
     try {
-      const batch = writeBatch(db);
-      batch.update(doc(db, 'prestasi', pres.id), {
-        status: decision,
-        poin,
-        verifiedBy: sessionUser.uid,
-        verifiedAt: serverTimestamp(),
-        catatan_verifikasi: catatan,
-        updatedAt: serverTimestamp(),
-      });
-
-      if (decision === 'verified' && poin > 0) {
-        batch.update(doc(db, 'students', pres.siswa_id), {
-          points: increment(poin),
-          updatedAt: serverTimestamp(),
-        });
-      }
-
-      batch.set(
-        newAuditRef(),
-        buildAuditPayload({
-          actor: auditActor,
-          action: decision === 'verified' ? 'prestasi_verify' : 'prestasi_reject',
-          collectionName: 'prestasi',
-          docId: pres.id,
-          siswaId: pres.siswa_id,
+      await putuskanPrestasi(
+        {
+          id: pres.id,
+          siswa_id: pres.siswa_id,
           rayon: pres.rayon,
-          before: { status: pres.status, poin: pres.poin },
-          after: { status: decision, poin, catatan_verifikasi: catatan },
-        })
+          judul: pres.judul,
+          status: pres.status,
+          poin: pres.poin,
+        },
+        {
+          status: decision,
+          poin: Number(verifyPoin[pres.id] ?? 100),
+          catatan: verifyCatatan[pres.id] ?? '',
+        },
+        auditActor
       );
-
-      await batch.commit();
     } catch (err) {
       setErrorMsg(
         'Gagal memverifikasi prestasi: ' + (err instanceof Error ? err.message : String(err))

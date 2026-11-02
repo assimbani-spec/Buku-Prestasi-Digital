@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { X, Award, Phone, Mail, AlertTriangle } from 'lucide-react';
-import { StudentRecord } from '../lib/firebase';
+import { StudentRecord } from '../lib/tipe';
 
 interface DetailSiswaModalProps {
   student: StudentRecord | null;

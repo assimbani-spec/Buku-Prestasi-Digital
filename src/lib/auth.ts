@@ -13,7 +13,7 @@
  */
 
 import { DATA_BACKEND, doc, getDoc, isLocalBackend } from './data';
-import { ensureLocalSeed } from './data/seed';
+import { pastikanAdminAwal } from './data/seed';
 import { findLocalProfileByEmail, normalizeEmail, verifyPassword } from './localAuth';
 
 const SESSION_KEY = 'bkp.localsession.v3';
@@ -133,7 +133,7 @@ export async function signInWithEmail(email: string, password: string): Promise<
   const normalized = normalizeEmail(email);
   if (!normalized || !password) throw new Error('Email dan kata sandi wajib diisi.');
 
-  await ensureLocalSeed();
+  await pastikanAdminAwal();
   const found = await findLocalProfileByEmail(normalized);
   if (!found) throw new Error('Email atau kata sandi salah.');
   if (found.data.active === false) {

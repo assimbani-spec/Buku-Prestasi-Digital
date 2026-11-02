@@ -14,8 +14,8 @@ Aplikasi modern untuk digitalisasi buku catatan pembiasaan santri/siswa, pencata
 - **Icon**: Lucide React
 - **Digital Signature**: `react-signature-canvas`
 
-> Folder `supabase/` dan `src/lib/supabase.ts` adalah sisa rencana awal dan belum
-> terhubung ke runtime. Kontrak yang harus dipenuhi adapter Supabase atau D1 ada di
+> Supabase dan Cloudflare D1 belum terpasang. Keduanya hanya rencana migrasi;
+> kontrak yang harus dipenuhi adapter-nya ada di
 > [`docs/data-backend.md`](docs/data-backend.md).
 
 ---
@@ -48,9 +48,10 @@ VITE_DATA_BACKEND=firestore  # Firebase Firestore + fungsi `firestore.rules`
 
 **Mode lokal** (dipakai sekarang): data disimpan di kunci `bkp.localdb.v2`, sesi di
 `bkp.localsession.v3`. Login memakai email dan kata sandi seperti mode produksi.
-Data awal dibuat sekali oleh `ensureLocalSeed()`: 5 akun (satu per peran), 4 santri
-fiktif, beberapa entri poin, satu pengajuan prestasi, dua notifikasi. Firebase tidak
-diinisialisasi selama mode lokal aktif.
+Basis data kosong hanya mendapat satu akun administrator (`admin@lokal.test`), lalu
+akun lain dibuat dari panel admin. Data contoh 4 santri dan lima akun peran hanya
+dimuat bila `VITE_LOCAL_SEED=demo`. Firebase tidak diinisialisasi selama mode lokal
+aktif.
 
 Batas mode lokal: tidak ada aturan keamanan (siapa pun yang membuka peramban bisa
 membaca seluruh isi), tidak ada sinkronisasi antar perangkat, dan kuota localStorage
@@ -58,6 +59,8 @@ sekitar 5 MB. Cocok untuk pengembangan dan demo, belum untuk data santri nyata.
 
 Panduan memindahkan ke Supabase atau Cloudflare D1, termasuk pemetaan koleksi ke
 tabel dan padanan aturan akses, ada di [`docs/data-backend.md`](docs/data-backend.md).
+Rencana refactor bertahap, termasuk module fitur yang akan dibentuk dan urutan
+tiketnya, ada di [`docs/refactor-plan.md`](docs/refactor-plan.md).
 
 ---
 
@@ -131,15 +134,17 @@ Login memakai email dan kata sandi di kedua mode. Perbedaannya:
   peramban. Panel admin pada mode ini menampilkan daftar akun dan menonaktifkan form
   pembuatan akun.
 
-Akun awal mode lokal memakai kata sandi `bkp12345`:
+Akun awal mode lokal memakai kata sandi `bkp12345`. Yang selalu dibuat hanya
+administrator; akun peran lain dibuat dari panel admin, atau ikut dibuat sebagai
+contoh bila `VITE_LOCAL_SEED=demo`:
 
-| Email | Peran |
-| :--- | :--- |
-| `admin@lokal.test` | Administrator |
-| `guru@lokal.test` | Guru / BK |
-| `pembimbing@lokal.test` | Pembimbing rayon |
-| `faiz@lokal.test` | Santri |
-| `wali@lokal.test` | Wali santri |
+| Email | Peran | Kapan ada |
+| :--- | :--- | :--- |
+| `admin@lokal.test` | Administrator | selalu, saat basis data masih kosong |
+| `guru@lokal.test` | Guru / BK | `VITE_LOCAL_SEED=demo` |
+| `pembimbing@lokal.test` | Pembimbing rayon | `VITE_LOCAL_SEED=demo` |
+| `faiz@lokal.test` | Santri | `VITE_LOCAL_SEED=demo` |
+| `wali@lokal.test` | Wali santri | `VITE_LOCAL_SEED=demo` |
 
 Ganti kata sandi akun awal lewat panel admin bila aplikasi dipakai bersama. Akun
 mode lokal hanya berlaku pada peramban dan perangkat tempat akun itu dibuat.
@@ -176,7 +181,8 @@ ada pada bagian `profiles/{uid}` di atas.
 
    Tanpa konfigurasi tambahan, aplikasi langsung berjalan di mode lokal. Masuk
    sebagai `admin@lokal.test` dengan kata sandi `bkp12345`, lalu tambah akun lain
-   dari panel admin. Untuk memakai Firestore, buat `.env.local` berisi
+   dari panel admin. Tambahkan `VITE_LOCAL_SEED=demo` di `.env.local` bila ingin
+   data santri contoh. Untuk memakai Firestore, isi `.env.local` dengan
    `VITE_DATA_BACKEND=firestore`.
 
 2. **Siapkan Firebase** (project sudah tertaut di `firebase-applet-config.json`)
@@ -247,9 +253,10 @@ Rules sudah diuji terhadap emulator Firestore (42 skenario, 42 lulus, termasuk
 scoping `pembiasaan_non_rutin`). Untuk mengulang di mesin Anda:
 
 ```bash
-# tes adapter dan login mode lokal (tanpa emulator)
+# tes adapter, login mode lokal, dan module prestasi (tanpa emulator)
 npm run test:local
 npm run test:auth
+npm run test:prestasi
 
 # dependensi uji (hanya untuk tes rules, tidak dipakai runtime)
 npm i --no-save @firebase/rules-unit-testing firebase@13
@@ -301,5 +308,3 @@ Rules mengunci koleksi ini:
   "belum tersedia" dan tidak menerima isian.
 - Rata-rata kelas, predikat, dan persentase konsistensi pembiasaan tidak ditampilkan
   karena tidak ada datanya di Firestore.
-- Berkas `src/lib/supabase.ts` dan `supabase/migration.sql` adalah sisa percobaan
-  awal dan tidak dipakai runtime (aplikasi memakai Firebase).

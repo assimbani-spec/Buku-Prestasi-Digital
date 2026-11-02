@@ -41,7 +41,7 @@ import {
   UserCheck,
 } from 'lucide-react';
 import { db, isLocalBackend } from '../lib/data';
-import type { UserProfile, AuditLogRecord } from '../lib/firebase';
+import type { UserProfile, AuditLogRecord } from '../lib/tipe';
 import { newAuditRef, buildAuditPayload } from '../lib/audit';
 import { canManageMasterData, roleLabel, type Role } from '../lib/rbac';
 import { hashPassword, normalizeEmail, MIN_PASSWORD_LENGTH } from '../lib/localAuth';
