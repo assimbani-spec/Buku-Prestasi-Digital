@@ -15,7 +15,8 @@
     "lint": "tsc --noEmit",
     "test:local": "tsx tests/local-driver.test.ts",
     "test:auth": "tsx tests/local-auth.test.ts",
-    "test:prestasi": "tsx tests/prestasi.test.ts"
+    "test:prestasi": "tsx tests/prestasi.test.ts",
+    "test:siswa": "tsx tests/siswa.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

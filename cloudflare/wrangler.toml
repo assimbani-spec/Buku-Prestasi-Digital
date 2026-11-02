@@ -1,0 +1,20 @@
+# Konfigurasi awal Cloudflare untuk BKP Digital.
+#
+# Worker ini belum ada isinya (`worker.ts` belum dibuat). Isi dulu
+# `database_id` hasil `wrangler d1 create bkp-digital`, lalu jalankan skema:
+#   wrangler d1 execute bkp-digital --remote --file=cloudflare/schema.sql
+#
+# Jangan menaruh kunci rahasia di berkas ini. Gunakan `wrangler secret put`.
+
+name = "bkp-digital-api"
+main = "worker.ts"
+compatibility_date = "2026-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "bkp-digital"
+database_id = "GANTI-DENGAN-ID-DARI-WRANGLER"
+
+[vars]
+APP_ORIGIN = "https://bkp.thibbilqulub.sch.id"
+SESSION_TTL_HOURS = "12"

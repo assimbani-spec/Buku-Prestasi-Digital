@@ -9,14 +9,14 @@ Aplikasi modern untuk digitalisasi buku catatan pembiasaan santri/siswa, pencata
 - **Frontend**: React 19 + Vite 8 (SPA, bukan Next.js) + TypeScript
 - **Styling**: Tailwind CSS 4 (Desain Hijau-Putih sesuai identitas SMK Thibbil Qulub Assimbani)
 - **Data**: satu facade di `src/lib/data`: **localStorage** (default, tanpa server) atau **Firestore**
-- **Auth**: pemilih akun contoh di mode lokal, Firebase Auth (email/password) di mode Firestore
-- **Server Produksi**: Express (`server.ts` → `server.js`) yang menyajikan `dist/`
+- **Auth**: email dan kata sandi. Mode lokal memakai PBKDF2 di peramban, mode Firestore memakai Firebase Auth
+- **Server Produksi**: Express (`server.js`) yang menyajikan `dist/` dengan header keamanan
 - **Icon**: Lucide React
 - **Digital Signature**: `react-signature-canvas`
 
-> Supabase dan Cloudflare D1 belum terpasang. Keduanya hanya rencana migrasi;
-> kontrak yang harus dipenuhi adapter-nya ada di
-> [`docs/data-backend.md`](docs/data-backend.md).
+> Supabase dan Cloudflare D1 belum terpasang. Skema database dan langkah
+> deploy-nya sudah disiapkan di [`docs/migrasi-backend.md`](docs/migrasi-backend.md).
+> Checklist produksi ada di [`docs/production.md`](docs/production.md).
 
 ---
 
@@ -47,7 +47,8 @@ VITE_DATA_BACKEND=firestore  # Firebase Firestore + fungsi `firestore.rules`
 ```
 
 **Mode lokal** (dipakai sekarang): data disimpan di kunci `bkp.localdb.v2`, sesi di
-`bkp.localsession.v3`. Login memakai email dan kata sandi seperti mode produksi.
+`bkp.localsession.v4` dan berakhir setelah 12 jam. Login memakai email dan kata
+sandi; lima percobaan gagal dalam 15 menit mengunci email itu selama 5 menit.
 Basis data kosong hanya mendapat satu akun administrator (`admin@lokal.test`), lalu
 akun lain dibuat dari panel admin. Data contoh 4 santri dan lima akun peran hanya
 dimuat bila `VITE_LOCAL_SEED=demo`. Firebase tidak diinisialisasi selama mode lokal
@@ -57,8 +58,10 @@ Batas mode lokal: tidak ada aturan keamanan (siapa pun yang membuka peramban bis
 membaca seluruh isi), tidak ada sinkronisasi antar perangkat, dan kuota localStorage
 sekitar 5 MB. Cocok untuk pengembangan dan demo, belum untuk data santri nyata.
 
-Panduan memindahkan ke Supabase atau Cloudflare D1, termasuk pemetaan koleksi ke
-tabel dan padanan aturan akses, ada di [`docs/data-backend.md`](docs/data-backend.md).
+Kontrak adapter dan padanan aturan akses ada di
+[`docs/data-backend.md`](docs/data-backend.md). Langkah migrasi Supabase dan
+Cloudflare D1, termasuk skema SQL, ada di
+[`docs/migrasi-backend.md`](docs/migrasi-backend.md).
 Rencana refactor bertahap, termasuk module fitur yang akan dibentuk dan urutan
 tiketnya, ada di [`docs/refactor-plan.md`](docs/refactor-plan.md).
 
@@ -123,7 +126,8 @@ agar scoping rules bekerja penuh.
 
 Login memakai email dan kata sandi di kedua mode. Perbedaannya:
 
-- **Mode lokal**: administrator membuat akun dari panel admin, menu **Pengguna**.
+- **Mode lokal**: administrator membuat santri di tab **Data Santri**, lalu akun
+  di tab **Pengguna** pada panel admin.
   Form itu mengisi nama, email, kata sandi awal, dan peran, lalu menautkan akun ke
   santri (peran santri), anak (wali santri), atau rayon (pembimbing). Kata sandi
   disimpan sebagai hash PBKDF2 dengan salt acak, bukan teks biasa. Admin juga bisa
@@ -253,9 +257,10 @@ Rules sudah diuji terhadap emulator Firestore (42 skenario, 42 lulus, termasuk
 scoping `pembiasaan_non_rutin`). Untuk mengulang di mesin Anda:
 
 ```bash
-# tes adapter, login mode lokal, dan module prestasi (tanpa emulator)
+# tes adapter, login, module santri, dan module prestasi (tanpa emulator)
 npm run test:local
 npm run test:auth
+npm run test:siswa
 npm run test:prestasi
 
 # dependensi uji (hanya untuk tes rules, tidak dipakai runtime)

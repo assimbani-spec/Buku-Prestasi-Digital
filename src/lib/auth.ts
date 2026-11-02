@@ -15,9 +15,22 @@
 import { DATA_BACKEND, doc, getDoc, isLocalBackend } from './data';
 import { pastikanAdminAwal } from './data/seed';
 import { findLocalProfileByEmail, normalizeEmail, verifyPassword } from './localAuth';
+import {
+  catatBerhasil,
+  catatGagal,
+  pesanTerkunci,
+  resetPenjaga,
+  statusMasuk,
+} from './loginGuard';
 
-const SESSION_KEY = 'bkp.localsession.v3';
-const LEGACY_SESSION_KEYS = ['bkp.localsession'];
+const SESSION_KEY = 'bkp.localsession.v4';
+const LEGACY_SESSION_KEYS = ['bkp.localsession', 'bkp.localsession.v3'];
+
+/**
+ * Sesi lokal berakhir setelah 12 jam. Tanpa ini, peramban yang ditinggal
+ * terbuka tetap memberi akses admin tanpa batas waktu.
+ */
+export const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 
 export interface AppUser {
   uid: string;
@@ -50,8 +63,12 @@ function readLocalSession(): AppUser | null {
   try {
     const raw = store.getItem(SESSION_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<AppUser>;
+    const parsed = JSON.parse(raw) as Partial<AppUser> & { expiresAt?: number };
     if (!parsed?.uid) return null;
+    if (parsed.expiresAt && Date.now() > parsed.expiresAt) {
+      store.removeItem(SESSION_KEY);
+      return null;
+    }
     return {
       uid: String(parsed.uid),
       email: parsed.email ?? null,
@@ -69,7 +86,10 @@ function writeLocalSession(user: AppUser | null): void {
     store.removeItem(SESSION_KEY);
     return;
   }
-  store.setItem(SESSION_KEY, JSON.stringify(user));
+  store.setItem(
+    SESSION_KEY,
+    JSON.stringify({ ...user, expiresAt: Date.now() + SESSION_TTL_MS })
+  );
 }
 
 function emit(user: AppUser | null): void {
@@ -133,9 +153,15 @@ export async function signInWithEmail(email: string, password: string): Promise<
   const normalized = normalizeEmail(email);
   if (!normalized || !password) throw new Error('Email dan kata sandi wajib diisi.');
 
+  const batas = statusMasuk(normalized);
+  if (!batas.boleh) throw new Error(pesanTerkunci(batas.sisaDetik));
+
   await pastikanAdminAwal();
   const found = await findLocalProfileByEmail(normalized);
-  if (!found) throw new Error('Email atau kata sandi salah.');
+  if (!found) {
+    catatGagal(normalized);
+    throw new Error('Email atau kata sandi salah.');
+  }
   if (found.data.active === false) {
     throw new Error('Akun ini dinonaktifkan. Hubungi admin sekolah.');
   }
@@ -144,7 +170,13 @@ export async function signInWithEmail(email: string, password: string): Promise<
   }
 
   const ok = await verifyPassword(password, found.data);
-  if (!ok) throw new Error('Email atau kata sandi salah.');
+  if (!ok) {
+    const setelah = catatGagal(normalized);
+    if (!setelah.boleh) throw new Error(pesanTerkunci(setelah.sisaDetik));
+    throw new Error('Email atau kata sandi salah.');
+  }
+
+  catatBerhasil(normalized);
 
   const user: AppUser = {
     uid: found.uid,
@@ -199,6 +231,7 @@ export async function resetLocalData(): Promise<void> {
   LEGACY_SESSION_KEYS.forEach((key) => store?.removeItem(key));
   const { clearLocalDatabase } = await import('./data');
   clearLocalDatabase();
+  resetPenjaga();
   emit(null);
 }
 

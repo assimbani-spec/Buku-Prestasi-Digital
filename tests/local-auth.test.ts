@@ -41,11 +41,13 @@ const { pastikanAdminAwal, LOCAL_SEED_PASSWORD } = await import('../src/lib/data
 const { signInWithEmail, signOutUser, watchAuthUser, resetLocalData } = await import(
   '../src/lib/auth'
 );
+const { catatGagal, resetPenjaga, MAKS_PERCOBAAN } = await import('../src/lib/loginGuard');
 
 let passed = 0;
 let failed = 0;
 async function test(name: string, run: () => Promise<void> | void) {
   try {
+    resetPenjaga();
     await run();
     passed += 1;
     console.log('  ok  ' + name);
@@ -118,6 +120,33 @@ await test('email tak dikenal ditolak dengan pesan yang sama', async () => {
     () => signInWithEmail('tidak-ada@lokal.test', LOCAL_SEED_PASSWORD),
     /Email atau kata sandi salah/
   );
+});
+
+await test('lima percobaan gagal mengunci email untuk sementara', async () => {
+  const email = 'tidak-ada@lokal.test';
+  for (let i = 0; i < MAKS_PERCOBAAN; i += 1) {
+    await assert.rejects(() => signInWithEmail(email, 'salahSekali'));
+  }
+  await assert.rejects(
+    () => signInWithEmail(email, LOCAL_SEED_PASSWORD),
+    /Terlalu banyak percobaan masuk/
+  );
+
+  const status = catatGagal(email);
+  assert.ok(status.sisaDetik > 0, 'email harus terkunci dengan sisa waktu');
+});
+
+await test('sesi kedaluwarsa setelah 12 jam', async () => {
+  await signInWithEmail('admin@lokal.test', LOCAL_SEED_PASSWORD);
+  const raw = storage.getItem('bkp.localsession.v4');
+  assert.ok(raw, 'sesi harus tersimpan');
+  const parsed = JSON.parse(raw as string);
+  assert.ok(parsed.expiresAt > Date.now(), 'sesi baru harus punya waktu kedaluwarsa');
+  parsed.expiresAt = Date.now() - 1000;
+  storage.setItem('bkp.localsession.v4', JSON.stringify(parsed));
+
+  assert.equal(await currentUid(), null, 'sesi kedaluwarsa tidak boleh dipakai');
+  assert.equal(storage.getItem('bkp.localsession.v4'), null, 'sesi kedaluwarsa dibersihkan');
 });
 
 await test('akun buatan admin bisa masuk, dan kata sandinya tidak tersimpan apa adanya', async () => {

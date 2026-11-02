@@ -39,12 +39,14 @@ import {
   KeyRound,
   UserX,
   UserCheck,
+  GraduationCap,
 } from 'lucide-react';
 import { db, isLocalBackend } from '../lib/data';
 import type { UserProfile, AuditLogRecord } from '../lib/tipe';
 import { newAuditRef, buildAuditPayload } from '../lib/audit';
 import { canManageMasterData, roleLabel, type Role } from '../lib/rbac';
 import { hashPassword, normalizeEmail, MIN_PASSWORD_LENGTH } from '../lib/localAuth';
+import TambahSiswaModal from './TambahSiswaModal';
 
 interface AdminPanelProps {
   profile: UserProfile | null;
@@ -73,8 +75,10 @@ interface PenggunaRow {
 interface SantriOption {
   id: string;
   name: string;
+  nisn: string;
   kelas: string;
   rayon: string;
+  points: number;
 }
 interface KategoriRow {
   id: string;
@@ -97,7 +101,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   onLogout,
   onOpenStaffDashboard,
 }) => {
-  const [tab, setTab] = useState<'master' | 'pengguna' | 'audit'>('master');
+  const [tab, setTab] = useState<'master' | 'santri' | 'pengguna' | 'audit'>('master');
   const [kelas, setKelas] = useState<KelasRow[]>([]);
   const [rayon, setRayon] = useState<RayonRow[]>([]);
   const [kategori, setKategori] = useState<KategoriRow[]>([]);
@@ -117,6 +121,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [childSelection, setChildSelection] = useState<string[]>([]);
   const [passwordTarget, setPasswordTarget] = useState<string | null>(null);
   const [passwordValue, setPasswordValue] = useState('');
+  const [showTambahSantri, setShowTambahSantri] = useState(false);
 
   const [newKelas, setNewKelas] = useState('');
   const [newRayon, setNewRayon] = useState('');
@@ -197,8 +202,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               return {
                 id: d.id,
                 name: data.name ?? '(tanpa nama)',
+                nisn: data.nisn ?? '-',
                 kelas: data.kelas ?? '-',
                 rayon: data.rayon ?? '-',
+                points: Number(data.points) || 0,
               } as SantriOption;
             })
             .sort((a, b) => a.name.localeCompare(b.name))
@@ -597,6 +604,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               <span>Master Data</span>
             </button>
             <button
+              onClick={() => setTab('santri')}
+              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl transition-all ${
+                tab === 'santri' ? 'bg-[#2E7D32] font-bold' : 'text-green-200 hover:bg-green-900'
+              }`}
+            >
+              <GraduationCap className="w-4 h-4" aria-hidden="true" />
+              <span>Data Santri</span>
+            </button>
+            <button
               onClick={() => setTab('pengguna')}
               className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl transition-all ${
                 tab === 'pengguna' ? 'bg-[#2E7D32] font-bold' : 'text-green-200 hover:bg-green-900'
@@ -644,9 +660,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             <h1 className="text-lg font-bold">
               {tab === 'master'
                 ? 'Master Data BKP'
-                : tab === 'pengguna'
-                  ? 'Akun Pengguna'
-                  : 'Jejak Audit Transaksi'}
+                : tab === 'santri'
+                  ? 'Data Santri'
+                  : tab === 'pengguna'
+                    ? 'Akun Pengguna'
+                    : 'Jejak Audit Transaksi'}
             </h1>
           </div>
 
@@ -842,6 +860,82 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </div>
               </section>
             </div>
+          )}
+
+          {tab === 'santri' && (
+            <section className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-green-100 bg-white p-4 shadow-sm">
+                <div>
+                  <h2 className="flex items-center gap-2 text-sm font-bold">
+                    <GraduationCap className="h-4 w-4 text-[#2E7D32]" aria-hidden="true" />
+                    Master santri
+                  </h2>
+                  <p className="mt-1 text-xs text-gray-500">
+                    {santri.length} santri terdaftar. NISN dipakai sebagai penanda unik.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowTambahSantri(true)}
+                  disabled={!isAdmin}
+                  className="flex min-h-11 items-center gap-2 rounded-xl bg-[#2E7D32] px-4 text-xs font-bold text-white hover:bg-[#1B5E20] disabled:bg-gray-300"
+                >
+                  <UserPlus className="h-4 w-4" aria-hidden="true" />
+                  Tambah santri
+                </button>
+              </div>
+
+              {!isAdmin && (
+                <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
+                  Hanya administrator yang dapat menambah santri.
+                </p>
+              )}
+
+              <div className="overflow-x-auto rounded-2xl border border-green-100 bg-white shadow-sm">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-gray-50 text-gray-500">
+                    <tr>
+                      <th className="p-2.5">Nama</th>
+                      <th className="p-2.5">NISN</th>
+                      <th className="p-2.5">Kelas</th>
+                      <th className="p-2.5">Rayon</th>
+                      <th className="p-2.5 text-right">Poin</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {santri.map((row) => (
+                      <tr key={row.id}>
+                        <td className="p-2.5 font-semibold">{row.name}</td>
+                        <td className="p-2.5">{row.nisn}</td>
+                        <td className="p-2.5">{row.kelas}</td>
+                        <td className="p-2.5">{row.rayon}</td>
+                        <td className="p-2.5 text-right font-semibold text-green-900">
+                          {row.points}
+                        </td>
+                      </tr>
+                    ))}
+                    {santri.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="p-3 text-gray-400">
+                          Belum ada santri. Tambahkan santri pertama lewat tombol di atas.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <TambahSiswaModal
+                isOpen={showTambahSantri}
+                onClose={() => setShowTambahSantri(false)}
+                onStudentAdded={() => {
+                  setNotice('Santri baru tersimpan.');
+                  setShowTambahSantri(false);
+                }}
+                actorRole={profile?.role}
+                actor={profile ? { uid: profile.uid, email: profile.email ?? null } : null}
+              />
+            </section>
           )}
 
           {tab === 'pengguna' && (

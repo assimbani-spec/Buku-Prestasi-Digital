@@ -23,13 +23,10 @@ import {
 } from '../../lib/data';
 import { buildAuditPayload, newAuditRef } from '../../lib/audit';
 import { canVerifyPrestasi } from '../../lib/rbac';
+import type { Aktor } from '../../lib/aktor';
 import type { PrestasiStatus } from '../../lib/tipe';
 
-export interface Aktor {
-  uid: string;
-  email?: string | null;
-  role?: string | null;
-}
+export type { Aktor };
 
 export interface PengajuanPrestasiInput {
   siswaId: string;

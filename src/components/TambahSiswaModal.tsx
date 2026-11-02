@@ -5,10 +5,8 @@
 
 import React, { useState } from 'react';
 import { UserPlus, X, Save, AlertCircle, CheckCircle2, School, User, Phone, Mail, Award, MapPin } from 'lucide-react';
-import { db } from '../lib/data';
 import type { StudentRecord } from '../lib/tipe';
-import { doc, serverTimestamp, writeBatch } from '../lib/data';
-import { buildAuditPayload, newAuditRef } from '../lib/audit';
+import { tambahSiswa } from '../features/siswa/siswa';
 
 interface TambahSiswaModalProps {
   isOpen: boolean;
@@ -72,84 +70,58 @@ export const TambahSiswaModal: React.FC<TambahSiswaModalProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
-      setErrorMsg('Nama lengkap siswa wajib diisi.');
+      setErrorMsg('Nama lengkap santri wajib diisi.');
       return;
     }
     if (!nisn.trim()) {
-      setErrorMsg('NISN siswa wajib diisi.');
+      setErrorMsg('NISN santri wajib diisi.');
+      return;
+    }
+    if (!actor) {
+      setErrorMsg('Sesi berakhir. Silakan masuk kembali.');
       return;
     }
 
     setLoading(true);
     setErrorMsg(null);
 
-    const newId = `sis_${Date.now()}`;
-    const studentData: StudentRecord = {
-      id: newId,
-      name: name.trim(),
-      nisn: nisn.trim(),
-      kelas,
-      rayon,
-      points: Number(initialPoints) || 1000,
-      waliName: waliName.trim() || undefined,
-      waliPhone: waliPhone.trim() || undefined,
-      waliEmail: waliEmail.trim() || undefined,
-      studentEmail: studentEmail.trim() || undefined,
-      createdAt: new Date().toISOString(),
-    };
-
     try {
-      const user = actor;
-      if (!user) {
-        throw new Error('Sesi berakhir. Silakan masuk kembali.');
-      }
-
-      // Master santri + audit log ditulis atomik.
-      const batch = writeBatch(db);
-      batch.set(doc(db, 'students', newId), {
-        ...studentData,
-        dibuat_oleh: user.uid,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-      batch.set(
-        newAuditRef(),
-        buildAuditPayload({
-          actor: { uid: user.uid, email: user.email, role: actorRole },
-          action: 'student_create',
-          collectionName: 'students',
-          docId: newId,
-          siswaId: newId,
+      const student = await tambahSiswa(
+        {
+          name,
+          nisn,
+          kelas,
           rayon,
-          after: { nama: studentData.name, nisn: studentData.nisn, kelas, rayon },
-        })
+          points: initialPoints,
+          waliName,
+          waliPhone,
+          waliEmail,
+          studentEmail,
+        },
+        { uid: actor.uid, email: actor.email, role: actorRole }
       );
-      await batch.commit();
+
+      setSuccessMsg(true);
+      onStudentAdded(student);
+
+      setTimeout(() => {
+        setSuccessMsg(false);
+        onClose();
+        setName('');
+        setNisn('');
+        setWaliName('');
+        setWaliPhone('');
+        setWaliEmail('');
+        setStudentEmail('');
+        setInitialPoints(1000);
+      }, 1500);
     } catch (err) {
-      // Jangan lanjut seolah berhasil: data harus benar-benar tersimpan.
-      setLoading(false);
       setErrorMsg(
         'Gagal menyimpan data ke database: ' + (err instanceof Error ? err.message : String(err))
       );
-      return;
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
-    setSuccessMsg(true);
-    onStudentAdded(studentData);
-
-    setTimeout(() => {
-      setSuccessMsg(false);
-      onClose();
-      // Reset form
-      setName('');
-      setNisn('');
-      setWaliName('');
-      setWaliPhone('');
-      setWaliEmail('');
-      setStudentEmail('');
-      setInitialPoints(1000);
-    }, 1500);
   };
 
   return (
