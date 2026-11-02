@@ -8,7 +8,7 @@ sebelum aplikasi dipakai data sekolah sungguhan.
 | Backend | Status | Cocok untuk |
 | :--- | :--- | :--- |
 | `local` (localStorage) | siap | demo, pelatihan, satu perangkat |
-| `firestore` | siap, rules diuji 42 skenario | produksi dengan Firebase |
+| `firestore` | siap dipakai, 40 skenario aturan tersedia di `tests/firestore-rules.test.mjs` (butuh Firebase Emulator) | produksi dengan Firebase |
 | Supabase | skema siap, adapter belum | produksi alternatif |
 | Cloudflare D1 | skema dan wrangler siap, Worker belum | produksi alternatif |
 
@@ -59,7 +59,8 @@ npm start                        # server.js, default port 3000
 - [ ] `npm run build` sukses dan `dist/` disajikan lewat HTTPS.
 - [ ] `npx tsc --noEmit` bersih.
 - [ ] `npm run test:local`, `test:auth`, `test:siswa`, `test:prestasi` lulus.
-- [ ] `firestore.rules` sudah di-deploy: `firebase deploy --only firestore:rules`.
+- [ ] Proyek Firebase sudah milik sekolah, bukan proyek contoh, dan `firestore.rules` sudah di-deploy: `firebase deploy --only firestore:rules`.
+- [ ] Jalankan `tests/firestore-rules.test.mjs` dengan Firebase Emulator setelah perubahan aturan.
 - [ ] Uji login tiap peran dan pastikan data per peran tidak bocor.
 - [ ] Uji dua akun berbeda: wali A tidak bisa membaca anak wali B.
 - [ ] Ganti kata sandi akun admin awal.
