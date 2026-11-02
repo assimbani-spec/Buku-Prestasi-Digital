@@ -540,19 +540,15 @@ export default function App() {
 
   const loadProfileAndRoute = async (user: AppUser) => {
     const ref = doc(db, 'profiles', user.uid);
-    let snap = await getDoc(ref);
+    const snap = await getDoc(ref);
     if (!snap.exists()) {
-      // Profil belum ada: dibuat dengan hak paling rendah (siswa).
-      // Role dinaikkan oleh admin (panel admin / Firebase Console).
-      await setDoc(ref, {
-        uid: user.uid,
-        email: user.email ?? '',
-        fullName: user.displayName || (user.email ?? '').split('@')[0],
-        role: 'siswa',
-        total_poin: 1000,
-        createdAt: new Date().toISOString(),
-      });
-      snap = await getDoc(ref);
+      // Akun Firebase tanpa profil tidak boleh membuat profilnya sendiri.
+      // Profil hanya dibuat admin, supaya akun baru tidak otomatis mendapat
+      // akses siswa tanpa persetujuan sekolah.
+      await signOutUser();
+      throw new Error(
+        'Akun ini belum terhubung ke profil sekolah. Hubungi admin untuk menghubungkan akun Anda.'
+      );
     }
     const data = snap.data() as UserProfile;
 
@@ -1549,10 +1545,20 @@ export default function App() {
                   <div className="mb-4 rounded-control border border-line bg-paper/60 px-3 py-2.5">
                     <p className="text-xs font-semibold text-ink">Mode lokal</p>
                     <p className="mt-1 text-xs leading-relaxed text-muted">
-                      Data tersimpan di peramban ini, bukan di server. Akun awal administrator:{' '}
-                      <span className="font-semibold text-ink">admin@lokal.test</span> dengan kata sandi{' '}
-                      <span className="font-semibold text-ink">{LOCAL_SEED_PASSWORD}</span>. Akun lain dibuat
-                      admin dari menu Pengguna.
+                      Data tersimpan di peramban ini, bukan di server.{' '}
+                      {import.meta.env.DEV ? (
+                        <>
+                          Akun awal administrator:{' '}
+                          <span className="font-semibold text-ink">admin@lokal.test</span> dengan kata sandi{' '}
+                          <span className="font-semibold text-ink">{LOCAL_SEED_PASSWORD}</span>. Akun lain dibuat
+                          admin dari menu Pengguna.
+                        </>
+                      ) : (
+                        <>
+                          Hubungi pengelola sistem untuk kata sandi akun administrator awal. Akun lain dibuat
+                          admin dari menu Pengguna.
+                        </>
+                      )}
                     </p>
                   </div>
                 )}

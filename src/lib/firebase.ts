@@ -30,7 +30,64 @@ import {
   limit,
   serverTimestamp
 } from 'firebase/firestore';
-import firebaseConfig from '../../firebase-applet-config.json';
+import configBawaan from '../../firebase-applet-config.json';
+import { DATA_BACKEND } from './data/config';
+
+/** Proyek contoh yang tidak boleh dipakai untuk data sekolah sungguhan. */
+const PROYEK_CONTOH = 'triple-cinema-jnj8s';
+
+function envFirebase(nama: string): string {
+  const env = ((import.meta as any)?.env ?? {}) as Record<string, unknown>;
+  return String(env[nama] ?? '').trim();
+}
+
+// Konfigurasi bisa ditimpa lewat env saat build. Nilai VITE_* memang publik
+// (sama seperti konfigurasi web Firebase pada umumnya); yang melindungi data
+// adalah Firebase Auth dan firestore.rules.
+const dariEnv = {
+  projectId: envFirebase('VITE_FIREBASE_PROJECT_ID'),
+  appId: envFirebase('VITE_FIREBASE_APP_ID'),
+  apiKey: envFirebase('VITE_FIREBASE_API_KEY'),
+  authDomain: envFirebase('VITE_FIREBASE_AUTH_DOMAIN'),
+  firestoreDatabaseId: envFirebase('VITE_FIREBASE_FIRESTORE_DATABASE_ID'),
+  storageBucket: envFirebase('VITE_FIREBASE_STORAGE_BUCKET'),
+  messagingSenderId: envFirebase('VITE_FIREBASE_MESSAGING_SENDER_ID'),
+  measurementId: envFirebase('VITE_FIREBASE_MEASUREMENT_ID'),
+};
+const envLengkap = Boolean(dariEnv.projectId && dariEnv.appId && dariEnv.apiKey);
+
+// Bila env lengkap, pakai env sepenuhnya. Jangan mencampur dengan nilai bawaan
+// karena database ID proyek contoh bisa terbawa ke proyek sekolah dan membuat
+// aplikasi membaca database yang salah.
+const firebaseConfig = envLengkap
+  ? {
+      projectId: dariEnv.projectId,
+      appId: dariEnv.appId,
+      apiKey: dariEnv.apiKey,
+      authDomain: dariEnv.authDomain || `${dariEnv.projectId}.firebaseapp.com`,
+      firestoreDatabaseId: dariEnv.firestoreDatabaseId || '(default)',
+      storageBucket:
+        dariEnv.storageBucket || `${dariEnv.projectId}.firebasestorage.app`,
+      messagingSenderId: dariEnv.messagingSenderId || undefined,
+      measurementId: dariEnv.measurementId || undefined,
+    }
+  : configBawaan;
+
+// Build produksi dengan backend Firestore tidak boleh diam-diam menulis data
+// sekolah ke proyek contoh. Gagalkan lebih awal agar tidak ada data nyata yang
+// masuk ke proyek yang bukan milik sekolah.
+if (
+  DATA_BACKEND === 'firestore' &&
+  Boolean((import.meta as any)?.env?.PROD) &&
+  firebaseConfig.projectId === PROYEK_CONTOH &&
+  !envLengkap
+) {
+  throw new Error(
+    'Konfigurasi Firebase masih memakai proyek contoh. Isi VITE_FIREBASE_PROJECT_ID, ' +
+      'VITE_FIREBASE_APP_ID, dan VITE_FIREBASE_API_KEY dengan proyek milik sekolah, ' +
+      'atau ganti firebase-applet-config.json sebelum build produksi.'
+  );
+}
 
 // Firebase diinisialisasi malas (lazy) supaya mode lokal tidak membuka
 // koneksi apa pun. Fungsi di bawah dipanggil hanya saat backend Firestore aktif.

@@ -137,8 +137,9 @@ klien.
    simpan sebagai berkas JSON.
 2. Buat skema di backend tujuan, lalu impor per koleksi dengan skrip yang
    memetakan `createdAt` ke tipe waktu backend.
-3. Isi `profiles` lebih dulu (peran, `studentId`, `childIds`, `rayonId`),
-   baru `students`, `poin_log`, `prestasi`, `notifikasi`, `master_*`.
+3. Isi `profiles` lebih dulu (peran, `active`, `studentId`, `childIds`,
+   `rayonId`), baru `students`, `nisn_index` (satu dokumen per NISN berisi
+   `nisn` dan `studentId`), `poin_log`, `prestasi`, `notifikasi`, `master_*`.
 4. Set `VITE_DATA_BACKEND` ke adapter baru, jalankan ulang, dan uji per peran:
    siswa, wali, pembimbing rayon, guru, admin.
 5. Hapus data lokal setelah migrasi terverifikasi.
@@ -151,3 +152,9 @@ klien.
   penyembunyian tombol di antarmuka.
 - Audit log ditulis di sisi server atau lewat aturan yang memaksa `actorId`
   sama dengan pengguna yang masuk dan `createdAt` sama dengan waktu server.
+- Profil dengan `active: false` harus kehilangan semua hak, bukan hanya
+  disembunyikan di antarmuka. Di Firestore, `hasProfile()` memeriksa field ini
+  pada setiap aturan.
+- Keunikan NISN dijaga dokumen `nisn_index/{nisn}` yang ditulis dalam batch
+  bersama `students`. Adapter lain wajib memakai indeks unik pada kolom NISN,
+  jangan hanya mengandalkan pengecekan `SELECT` sebelum `INSERT`.

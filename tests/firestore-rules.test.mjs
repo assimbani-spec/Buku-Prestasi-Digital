@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
-import { doc, getDoc, getDocs, collection, setDoc, updateDoc, addDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
+import { doc, getDoc, getDocs, collection, setDoc, updateDoc, addDoc, writeBatch, serverTimestamp, Timestamp } from 'firebase/firestore';
 
 const RULES = fs.readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8');
 
@@ -21,14 +21,17 @@ const check = async (name, promise, expectOk) => {
 
 await env.withSecurityRulesDisabled(async (ctx) => {
   const db = ctx.firestore();
-  await setDoc(doc(db, 'profiles', 'uidSiswa'), { role: 'siswa', email: 'siswa1@test.com', fullName: 'Siswa Satu', studentId: 's1' });
-  await setDoc(doc(db, 'profiles', 'uidSiswa2'), { role: 'siswa', email: 'siswa2@test.com', fullName: 'Siswa Dua', studentId: 's2' });
-  await setDoc(doc(db, 'profiles', 'uidOrtu'), { role: 'orang_tua', email: 'ortu1@test.com', fullName: 'Wali', childIds: ['s1'] });
-  await setDoc(doc(db, 'profiles', 'uidPembimbing'), { role: 'pembimbing_rayon', email: 'pemb@test.com', fullName: 'Pemb', rayonId: 'Rayon A' });
+  await setDoc(doc(db, 'profiles', 'uidSiswa'), { role: 'siswa', email: 'siswa1@test.com', fullName: 'Siswa Satu', studentId: 's1', active: true });
+  await setDoc(doc(db, 'profiles', 'uidSiswa2'), { role: 'siswa', email: 'siswa2@test.com', fullName: 'Siswa Dua', studentId: 's2', active: true });
+  await setDoc(doc(db, 'profiles', 'uidOrtu'), { role: 'orang_tua', email: 'ortu1@test.com', fullName: 'Wali', childIds: ['s1'], active: true });
+  await setDoc(doc(db, 'profiles', 'uidPembimbing'), { role: 'pembimbing_rayon', email: 'pemb@test.com', fullName: 'Pemb', rayonId: 'Rayon A', active: true });
+  // Profil lama tanpa field active harus tetap dianggap aktif.
   await setDoc(doc(db, 'profiles', 'uidGuru'), { role: 'guru', email: 'guru1@test.com', fullName: 'Guru' });
-  await setDoc(doc(db, 'profiles', 'uidAdmin'), { role: 'admin', email: 'admin@test.com', fullName: 'Admin' });
-  await setDoc(doc(db, 'students', 's1'), { name: 'Siswa Satu', nisn: '001', kelas: 'X A', rayon: 'Rayon A', points: 100, studentEmail: 'siswa1@test.com', waliEmail: 'ortu1@test.com' });
+  await setDoc(doc(db, 'profiles', 'uidAdmin'), { role: 'admin', email: 'admin@test.com', fullName: 'Admin', active: true });
+  await setDoc(doc(db, 'profiles', 'uidNonaktif'), { role: 'siswa', email: 'nonaktif@test.com', fullName: 'Nonaktif', studentId: 's1', active: false });
+  await setDoc(doc(db, 'students', 's1'), { name: 'Siswa Satu', nisn: '001', kelas: 'X A', rayon: 'Rayon A', points: 100, lastJournalDate: '2026-09-30', studentEmail: 'siswa1@test.com', waliEmail: 'ortu1@test.com' });
   await setDoc(doc(db, 'students', 's2'), { name: 'Siswa Dua', nisn: '002', kelas: 'X B', rayon: 'Rayon B', points: 100, studentEmail: 'siswa2@test.com', waliEmail: 'ortu2@test.com' });
+  await setDoc(doc(db, 'pembiasaan_harian', 'uidSiswa_2026-10-02'), { siswa_id: 'uidSiswa', student_id: 's1', rayon: 'Rayon A', tanggal: '2026-10-02', poin_harian: 10 });
 });
 
 const siswa = env.authenticatedContext('uidSiswa', { email: 'siswa1@test.com' }).firestore();
@@ -36,6 +39,8 @@ const ortu = env.authenticatedContext('uidOrtu', { email: 'ortu1@test.com' }).fi
 const pemb = env.authenticatedContext('uidPembimbing', { email: 'pemb@test.com' }).firestore();
 const guru = env.authenticatedContext('uidGuru', { email: 'guru1@test.com' }).firestore();
 const admin = env.authenticatedContext('uidAdmin', { email: 'admin@test.com' }).firestore();
+const nonaktif = env.authenticatedContext('uidNonaktif', { email: 'nonaktif@test.com' }).firestore();
+const akunBaru = env.authenticatedContext('uidBaru', { email: 'baru@test.com' }).firestore();
 
 await check('siswa baca dirinya sendiri', getDoc(doc(siswa, 'students', 's1')), true);
 await check('siswa baca santri lain (harus tolak)', getDoc(doc(siswa, 'students', 's2')), false);
@@ -46,11 +51,37 @@ await check('pembimbing baca rayonnya', getDoc(doc(pemb, 'students', 's1')), tru
 await check('pembimbing baca rayon lain (harus tolak)', getDoc(doc(pemb, 'students', 's2')), false);
 await check('guru baca semua santri', getDoc(doc(guru, 'students', 's2')), true);
 
-await check('siswa naikkan poin +20', updateDoc(doc(siswa, 'students', 's1'), { points: 120, updatedAt: serverTimestamp() }), true);
-await check('siswa naikkan poin +500 sekali tulis (harus tolak)', updateDoc(doc(siswa, 'students', 's1'), { points: 620 }), false);
+await check('siswa naikkan poin tanpa tanggal baru (harus tolak)', updateDoc(doc(siswa, 'students', 's1'), { points: 120, updatedAt: serverTimestamp() }), false);
+await check('siswa naikkan poin +20 untuk tanggal baru', updateDoc(doc(siswa, 'students', 's1'), { points: 120, lastJournalDate: '2026-10-01', updatedAt: serverTimestamp() }), true);
+await check('siswa naikkan poin lagi di tanggal yang sama (harus tolak)', updateDoc(doc(siswa, 'students', 's1'), { points: 140, lastJournalDate: '2026-10-01', updatedAt: serverTimestamp() }), false);
+await check('siswa naikkan poin untuk tanggal yang sudah punya jurnal (harus tolak)', updateDoc(doc(siswa, 'students', 's1'), { points: 140, lastJournalDate: '2026-10-02', updatedAt: serverTimestamp() }), false);
+await check('siswa naikkan poin +500 sekali tulis (harus tolak)', updateDoc(doc(siswa, 'students', 's1'), { points: 620, lastJournalDate: '2026-10-03' }), false);
 await check('siswa ubah nama santri (harus tolak)', updateDoc(doc(siswa, 'students', 's1'), { name: 'Diubah' }), false);
 await check('pembimbing ubah poin rayon lain (harus tolak)', updateDoc(doc(pemb, 'students', 's2'), { points: 999 }), false);
 await check('pembimbing ubah poin rayonnya', updateDoc(doc(pemb, 'students', 's1'), { points: 150, updatedAt: serverTimestamp() }), true);
+
+// ── Keunikan NISN lewat kunci nisn_index ────────────────────────────
+await check('guru tambah santri tanpa kunci NISN (harus tolak)', setDoc(doc(guru, 'students', 's3'), { name: 'Siswa Tiga', nisn: '003', kelas: 'X A', rayon: 'Rayon A', points: 100 }), false);
+
+const batchBaru = writeBatch(guru);
+batchBaru.set(doc(guru, 'students', 's3'), { name: 'Siswa Tiga', nisn: '003', kelas: 'X A', rayon: 'Rayon A', points: 100 });
+batchBaru.set(doc(guru, 'nisn_index', '003'), { nisn: '003', studentId: 's3', createdAt: serverTimestamp() });
+await check('guru tambah santri dengan kunci NISN', batchBaru.commit(), true);
+await check('siswa baca indeks NISN (harus tolak)', getDoc(doc(siswa, 'nisn_index', '003')), false);
+
+const batchGanda = writeBatch(guru);
+batchGanda.set(doc(guru, 'students', 's4'), { name: 'Siswa Empat', nisn: '003', kelas: 'X A', rayon: 'Rayon A', points: 100 });
+batchGanda.set(doc(guru, 'nisn_index', '003'), { nisn: '003', studentId: 's4', createdAt: serverTimestamp() });
+await check('NISN ganda ditolak walau dicek ulang', batchGanda.commit(), false);
+
+// ── Jurnal pembiasaan harian ────────────────────────────────────────
+const jurnalSiswa = { siswa_id: 'uidSiswa', student_id: 's1', rayon: 'Rayon A', tanggal: '2026-11-01', poin_harian: 10 };
+await check('siswa buat jurnal tanggal baru', setDoc(doc(siswa, 'pembiasaan_harian', 'uidSiswa_2026-11-01'), jurnalSiswa), true);
+await check('siswa timpa jurnal tanggal yang sama (harus tolak)', setDoc(doc(siswa, 'pembiasaan_harian', 'uidSiswa_2026-11-01'), jurnalSiswa), false);
+await check('siswa ubah poin jurnal (harus tolak)', updateDoc(doc(siswa, 'pembiasaan_harian', 'uidSiswa_2026-11-01'), { poin_harian: 60 }), false);
+await check('siswa buat jurnal poin di atas 60 (harus tolak)', setDoc(doc(siswa, 'pembiasaan_harian', 'uidSiswa_2026-11-02'), { ...jurnalSiswa, tanggal: '2026-11-02', poin_harian: 61 }), false);
+await check('siswa buat jurnal atas nama santri lain (harus tolak)', setDoc(doc(siswa, 'pembiasaan_harian', 'uidSiswa2_2026-11-01'), { ...jurnalSiswa, siswa_id: 'uidSiswa2', student_id: 's2' }), false);
+await check('guru koreksi jurnal siswa', updateDoc(doc(guru, 'pembiasaan_harian', 'uidSiswa_2026-11-01'), { poin_harian: 20, updatedAt: serverTimestamp() }), true);
 
 const basePrestasi = { siswa_id: 's1', rayon: 'Rayon A', judul: 'Juara 1', kategori: 'Akademik', tingkat: 'Sekolah', capaian: 'Juara 1', tanggal: '2026-10-01', deskripsi: '' };
 
@@ -117,6 +148,18 @@ await check('guru baca semua non-rutin', getDoc(doc(guru, 'pembiasaan_non_rutin'
 await check('siswa naikkan role sendiri (harus tolak)', updateDoc(doc(siswa, 'profiles', 'uidSiswa'), { role: 'admin' }), false);
 await check('admin ubah role pengguna lain', updateDoc(doc(admin, 'profiles', 'uidSiswa2'), { role: 'pembimbing_rayon', rayonId: 'Rayon B' }), true);
 await check('siswa baca profil guru (harus tolak)', getDoc(doc(siswa, 'profiles', 'uidGuru')), false);
+
+// ── Akun nonaktif ───────────────────────────────────────────────────
+await check('akun nonaktif baca santri (harus tolak)', getDoc(doc(nonaktif, 'students', 's1')), false);
+await check('akun nonaktif baca profilnya sendiri', getDoc(doc(nonaktif, 'profiles', 'uidNonaktif')), true);
+await check('akun nonaktif tulis audit (harus tolak)', addDoc(collection(nonaktif, 'audit_log'), { actorId: 'uidNonaktif', action: 'jurnal_save', collection: 'x', docId: 'y', createdAt: serverTimestamp() }), false);
+await check('admin aktifkan kembali akun', updateDoc(doc(admin, 'profiles', 'uidNonaktif'), { active: true }), true);
+await check('akun yang diaktifkan bisa baca santri lagi', getDoc(doc(nonaktif, 'students', 's1')), true);
+
+// ── Pembuatan profil hanya oleh admin ───────────────────────────────
+await check('akun baru tidak bisa membuat profil sendiri (harus tolak)', setDoc(doc(akunBaru, 'profiles', 'uidBaru'), { uid: 'uidBaru', email: 'baru@test.com', fullName: 'Baru', role: 'siswa', active: true, total_poin: 1000 }), false);
+await check('admin membuat profil akun baru', setDoc(doc(admin, 'profiles', 'uidBaru'), { uid: 'uidBaru', email: 'baru@test.com', fullName: 'Baru', role: 'guru', active: true }), true);
+await check('admin membuat profil tanpa active (harus tolak)', setDoc(doc(admin, 'profiles', 'uidBaru2'), { uid: 'uidBaru2', email: 'baru2@test.com', fullName: 'Baru 2', role: 'guru' }), false);
 
 console.log('\n' + results.join('\n'));
 const failed = results.filter((r) => r.startsWith('FAIL')).length;

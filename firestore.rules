@@ -91,13 +91,14 @@ service cloud.firestore {
     match /profiles/{userId} {
       allow read: if isSignedIn() && (myUid() == userId || isGuruOrAdmin());
 
-      // Profil baru hanya boleh dibuat dengan hak terendah (siswa) dan
-      // tanpa field penautan apa pun (studentId/childIds/rayonId).
-      allow create: if myUid() == userId
-        && request.resource.data.role == 'siswa'
-        && !('studentId' in request.resource.data)
-        && !('childIds' in request.resource.data)
-        && !('rayonId' in request.resource.data);
+      // Profil hanya dibuat admin. Pengguna tidak boleh membuat profilnya
+      // sendiri: tanpa aturan ini, akun Firebase baru bisa langsung masuk
+      // sebagai siswa tanpa persetujuan sekolah.
+      allow create: if isAdmin()
+        && request.resource.data.uid == userId
+        && request.resource.data.email is string
+        && request.resource.data.role in ['siswa', 'guru', 'pembimbing_rayon', 'orang_tua', 'admin']
+        && request.resource.data.active == true;
 
       // Hanya admin yang boleh mengubah role / penautan / total_poin.
       // Pemilik hanya boleh menyunting data kontak & nama tampilan.
@@ -129,10 +130,15 @@ service cloud.firestore {
                 || (('waliEmail' in resource.data)
                     && resource.data.waliEmail == myEmail())));
 
+      // NISN unik dijaga lewat dokumen kunci nisn_index yang ditulis dalam
+      // batch yang sama. Dua pendaftaran dengan NISN sama tidak bisa sama-sama
+      // berhasil, walau pengecekan di klien terlewati.
       allow create: if isGuruOrAdmin()
         && request.resource.data.name is string
         && request.resource.data.nisn is string
-        && request.resource.data.points is number;
+        && request.resource.data.points is number
+        && getAfter(/databases/$(database)/documents/nisn_index/$(request.resource.data.nisn))
+             .data.studentId == studentId;
 
       allow update: if isGuruOrAdmin()
         // Pembimbing rayon: hanya poin di rayonnya, tidak boleh memindah rayon.
@@ -156,6 +162,18 @@ service cloud.firestore {
                 || request.resource.data.lastJournalDate != resource.data.lastJournalDate)
             && !exists(/databases/$(database)/documents/pembiasaan_harian/$(myUid() + '_' + request.resource.data.lastJournalDate)));
 
+      allow delete: if isAdmin();
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // Kunci keunikan NISN. Dokumen hanya boleh dibuat, tidak diubah, agar
+    // NISN tidak bisa dipindahkan ke santri lain tanpa menghapus indeksnya.
+    // ════════════════════════════════════════════════════════════════
+    match /nisn_index/{nisn} {
+      allow read: if isGuruOrAdmin();
+      allow create: if isGuruOrAdmin()
+        && request.resource.data.nisn == nisn
+        && request.resource.data.studentId is string;
       allow delete: if isAdmin();
     }
 

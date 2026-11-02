@@ -115,6 +115,14 @@ export async function tambahSiswa(
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
+  // Kunci NISN ditulis dalam batch yang sama. Aturan Firestore mensyaratkan
+  // indeks ini ada, sehingga NISN ganda tetap ditolak walau dua admin
+  // menambahkan santri pada saat yang hampir bersamaan.
+  batch.set(doc(db, 'nisn_index', nisn), {
+    nisn,
+    studentId: id,
+    createdAt: serverTimestamp(),
+  });
   batch.set(
     newAuditRef(),
     buildAuditPayload({

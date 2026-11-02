@@ -94,6 +94,11 @@ await test('santri tersimpan lengkap dengan audit pembuatan', async () => {
   assert.equal(tersimpan?.points, 1000);
   assert.equal(tersimpan?.dibuat_oleh, ADMIN.uid);
 
+  const indeks = (
+    await getDoc(doc(null as unknown as never, 'nisn_index', santriBaru.nisn))
+  ).data();
+  assert.equal(indeks?.studentId, santri.id, 'kunci NISN harus menunjuk santri ini');
+
   const audit = await semua('audit_log');
   assert.equal(audit.length, 1);
   assert.equal(audit[0].action, 'student_create');

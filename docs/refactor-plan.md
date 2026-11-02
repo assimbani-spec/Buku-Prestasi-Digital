@@ -47,9 +47,10 @@ Temuan yang paling mahal:
 3. **Bentuk query per peran adalah interface tersembunyi.** Ia ditentukan oleh
    kombinasi `role`, `myStudentId`, `myChildIds`, `myRayonId`, dan
    `firestore.rules`. Tidak ada module yang bisa diuji tanpa merender React.
-4. **Liputan tes belum menyentuh fitur.** 27 tes yang ada menguji adapter data
-   (15) dan login (12), ditambah 42 skenario rules. Nol tes untuk alur prestasi,
-   jurnal, poin, atau pembuatan akun.
+4. **Liputan tes belum menyentuh semua fitur.** 45 tes yang ada menguji adapter
+   data (16), login (15), module santri (6), dan prestasi (8), ditambah 63
+   skenario rules. Belum ada tes unit untuk alur jurnal, poin, atau pembuatan
+   akun.
 5. **Dashboard siswa saja 981 baris** di dalam `App.tsx` (L1697 sampai L2677),
    guru 527 baris, wali 318 baris.
 

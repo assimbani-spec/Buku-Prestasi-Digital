@@ -184,33 +184,42 @@ ada pada bagian `profiles/{uid}` di atas.
    ```
 
    Tanpa konfigurasi tambahan, aplikasi langsung berjalan di mode lokal. Masuk
-   sebagai `admin@lokal.test` dengan kata sandi `bkp12345`, lalu tambah akun lain
-   dari panel admin. Tambahkan `VITE_LOCAL_SEED=demo` di `.env.local` bila ingin
-   data santri contoh. Untuk memakai Firestore, isi `.env.local` dengan
-   `VITE_DATA_BACKEND=firestore`.
+   sebagai `admin@lokal.test` dengan kata sandi `bkp12345` (hanya ditampilkan di
+   layar login saat mode pengembangan), lalu tambah akun lain dari panel admin.
+   Tambahkan `VITE_LOCAL_SEED=demo` di `.env.local` bila ingin data santri contoh.
+   Untuk memakai Firestore, isi `.env.local` dengan `VITE_DATA_BACKEND=firestore`
+   dan variabel `VITE_FIREBASE_*` (lihat `.env.example`).
 
-2. **Siapkan Firebase** (project sudah tertaut di `firebase-applet-config.json`)
+2. **Siapkan Firebase** (ganti proyek contoh dengan proyek sekolah)
    - Firebase Console → **Authentication** → aktifkan provider **Email/Password**.
-   - Buat akun guru & orang tua di tab **Users**.
+   - Buat akun di tab **Users**. Jangan bagikan akses proyek ke pihak luar.
    - Deploy security rules (sudah tersedia `firebase.json`):
      ```bash
      npx firebase-tools deploy --only firestore:rules --project <project-id>
-     # atau uji dulu di emulator:
-     npx firebase-tools emulators:start --only firestore --project demo-bkp
      ```
+   - Isi `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_APP_ID`, dan
+     `VITE_FIREBASE_API_KEY` (beserta nilai lain bila perlu) di `.env.local`.
+     Aplikasi hasil build produksi dengan backend Firestore menolak berjalan
+     bila masih memakai proyek contoh tanpa env tersebut.
 
 3. **Buat dokumen profil untuk setiap akun** di Firestore, koleksi `profiles`,
    ID dokumen = **UID akun tersebut**:
    ```json
-   { "uid": "<uid>", "email": "guru@sekolah.id", "fullName": "Ust. Hendra", "role": "guru", "total_poin": 1000 }
+   { "uid": "<uid>", "email": "guru@sekolah.id", "fullName": "Ust. Hendra", "role": "guru", "active": true, "total_poin": 0 }
    ```
    `role`: `siswa`, `orang_tua`, `guru`, `pembimbing_rayon`, atau `admin`.
-   Akun baru yang belum punya profil otomatis dibuat sebagai `siswa` (hak terendah)
-   **tanpa** penautan; admin harus melengkapi `studentId` / `childIds` / `rayonId`.
+   Sertakan `"active": true`. Profil hanya boleh dibuat admin; akun Auth yang
+   belum punya profil tidak mendapat akses apa pun, dan aplikasi tidak lagi
+   membuat profil otomatis.
 
-   **Admin pertama harus dibuat manual** (bootstrap): ubah `role` salah satu profil
-   menjadi `admin` dari Firebase Console. Setelah itu admin bisa mengangkat pengguna
-   lain lewat console maupun langsung di Firestore.
+   **Admin pertama harus dibuat manual** (bootstrap): buat akun Auth, lalu buat
+   `profiles/{uid}` dengan `role: "admin"` dan `active: true` dari Firebase
+   Console. Setelah itu admin bisa mengangkat pengguna lain lewat console maupun
+   langsung di Firestore.
+
+   Untuk santri lama, isi `nisn_index/{nisn}` berisi `{ nisn, studentId }` sekali
+   agar kunci keunikan NISN berlaku untuk data lama. Santri baru menulis kunci ini
+   otomatis dalam batch yang sama.
 
    Penautan minimal agar alur berjalan:
    - siswa → `profiles/{uid}.studentId` = ID dokumen di `students`
@@ -246,15 +255,16 @@ ada pada bagian `profiles/{uid}` di atas.
      Settings → Authorized domains**, jika tidak login akan gagal di domain tersebut.
 
 > Logout dan login memakai Firebase Auth sepenuhnya. Bila akun belum punya dokumen
-> `profiles/{uid}`, aplikasi membuat profil role `siswa` tanpa penautan; admin harus
-> melengkapinya.
+> `profiles/{uid}`, aplikasi menolak masuk dan meminta admin menghubungkan akun.
+> Ini disengaja agar akun baru tidak otomatis mendapat akses siswa.
 
 ---
 
 ## Verifikasi RBAC (sebelum dipakai pengguna nyata)
 
-Rules sudah diuji terhadap emulator Firestore (42 skenario, 42 lulus, termasuk
-scoping `pembiasaan_non_rutin`). Untuk mengulang di mesin Anda:
+Rules sudah diuji terhadap emulator Firestore (63 skenario, 63 lulus, termasuk
+scoping `pembiasaan_non_rutin`, akun nonaktif, NISN ganda, dan jurnal ganda).
+Untuk mengulang di mesin Anda:
 
 ```bash
 # tes adapter, login, module santri, dan module prestasi (tanpa emulator)
@@ -263,14 +273,13 @@ npm run test:auth
 npm run test:siswa
 npm run test:prestasi
 
-# dependensi uji (hanya untuk tes rules, tidak dipakai runtime)
-npm i --no-save @firebase/rules-unit-testing firebase@13
-# butuh Java 11+ untuk emulator Firestore
-npx firebase-tools emulators:exec --only firestore --project demo-bkp \
-  "node tests/firestore-rules.test.mjs"
+# tes aturan Firestore; butuh Java 11+ untuk emulator
+npm run test:rules
 ```
 
-`--no-save` dipakai agar `package.json`/`bun.lock` tidak berubah.
+`@firebase/rules-unit-testing` dan `firebase-tools` sudah tercatat sebagai
+`devDependencies`, jadi `bun install` menyiapkan keduanya. Emulator Firestore
+diunduh otomatis saat `npm run test:rules` pertama kali.
 
 Skenario minimum yang wajib dicoba manual setelah rules dideploy:
 
