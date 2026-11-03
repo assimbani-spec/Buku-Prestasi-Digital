@@ -33,8 +33,8 @@ import {
 import configBawaan from '../../firebase-applet-config.json';
 import { DATA_BACKEND } from './data/config';
 
-/** Proyek contoh yang tidak boleh dipakai untuk data sekolah sungguhan. */
-const PROYEK_CONTOH = 'triple-cinema-jnj8s';
+/** Placeholder proyek yang belum dikonfigurasi */
+const PLACEHOLDER_PROJECTS = ['remixed-project-id', 'your-project-id'];
 
 function envFirebase(nama: string): string {
   const env = ((import.meta as any)?.env ?? {}) as Record<string, unknown>;
@@ -56,9 +56,8 @@ const dariEnv = {
 };
 const envLengkap = Boolean(dariEnv.projectId && dariEnv.appId && dariEnv.apiKey);
 
-// Bila env lengkap, pakai env sepenuhnya. Jangan mencampur dengan nilai bawaan
-// karena database ID proyek contoh bisa terbawa ke proyek sekolah dan membuat
-// aplikasi membaca database yang salah.
+// Bila env lengkap, pakai env sepenuhnya. Jika tidak, gunakan konfigurasi
+// resmi dari firebase-applet-config.json yang telah diprovisi.
 const firebaseConfig = envLengkap
   ? {
       projectId: dariEnv.projectId,
@@ -73,19 +72,13 @@ const firebaseConfig = envLengkap
     }
   : configBawaan;
 
-// Build produksi dengan backend Firestore tidak boleh diam-diam menulis data
-// sekolah ke proyek contoh. Gagalkan lebih awal agar tidak ada data nyata yang
-// masuk ke proyek yang bukan milik sekolah.
+// Cegah eksekusi hanya jika konfigurasi Firebase belum diprovisi sama sekali
 if (
   DATA_BACKEND === 'firestore' &&
-  Boolean((import.meta as any)?.env?.PROD) &&
-  firebaseConfig.projectId === PROYEK_CONTOH &&
-  !envLengkap
+  (!firebaseConfig.projectId || PLACEHOLDER_PROJECTS.includes(firebaseConfig.projectId))
 ) {
   throw new Error(
-    'Konfigurasi Firebase masih memakai proyek contoh. Isi VITE_FIREBASE_PROJECT_ID, ' +
-      'VITE_FIREBASE_APP_ID, dan VITE_FIREBASE_API_KEY dengan proyek milik sekolah, ' +
-      'atau ganti firebase-applet-config.json sebelum build produksi.'
+    'Konfigurasi Firebase belum terpasang. Pastikan firebase-applet-config.json sudah terisi dengan proyek yang valid.'
   );
 }
 

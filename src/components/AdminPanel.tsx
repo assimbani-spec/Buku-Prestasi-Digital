@@ -43,6 +43,8 @@ import {
   Edit,
   Search,
   Filter,
+  FileSpreadsheet,
+  Download,
 } from 'lucide-react';
 import { db, isLocalBackend } from '../lib/data';
 import type { UserProfile, AuditLogRecord, StudentRecord } from '../lib/tipe';
@@ -50,7 +52,11 @@ import { newAuditRef, buildAuditPayload } from '../lib/audit';
 import { canManageMasterData, roleLabel, type Role } from '../lib/rbac';
 import { hashPassword, normalizeEmail, MIN_PASSWORD_LENGTH } from '../lib/localAuth';
 import { hapusSiswa } from '../features/siswa/siswa';
+import { createAccountThroughApp, sendPasswordResetThroughApp } from '../lib/createUserHelper';
+import { downloadTemplateSiswa, downloadTemplateKategori } from '../lib/excelHelper';
 import TambahSiswaModal from './TambahSiswaModal';
+import ImportSiswaModal from './ImportSiswaModal';
+import ImportKategoriModal from './ImportKategoriModal';
 
 interface AdminPanelProps {
   profile: UserProfile | null;
@@ -130,9 +136,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [passwordTarget, setPasswordTarget] = useState<string | null>(null);
   const [passwordValue, setPasswordValue] = useState('');
   const [showTambahSantri, setShowTambahSantri] = useState(false);
+  const [showImportSiswa, setShowImportSiswa] = useState(false);
+  const [showImportKategori, setShowImportKategori] = useState(false);
   const [editingSantri, setEditingSantri] = useState<StudentRecord | null>(null);
   const [santriKelasFilter, setSantriKelasFilter] = useState('semua');
   const [santriSearch, setSantriSearch] = useState('');
+  const [penggunaRoleFilter, setPenggunaRoleFilter] = useState<'semua' | Role>('semua');
+  const [penggunaSearch, setPenggunaSearch] = useState('');
 
   const [confirmDelete, setConfirmDelete] = useState<{
     type: 'master_kelas' | 'master_rayon' | 'master_kategori_poin' | 'profile' | 'student';
@@ -425,14 +435,64 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setChildSelection([]);
   };
 
+  const handleSelectStudentForUser = (santriId: string) => {
+    setStudentLink(santriId);
+    const chosen = santri.find((s) => s.id === santriId);
+    if (chosen) {
+      const sanitized = chosen.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const autoEmail =
+        chosen.studentEmail ||
+        (chosen.nisn && chosen.nisn !== '-'
+          ? `siswa.${chosen.nisn}@sekolah.id`
+          : `${sanitized}@sekolah.id`);
+      const autoPass =
+        chosen.nisn && chosen.nisn !== '-' ? `Siswa${chosen.nisn}` : 'BkpDigital123';
+      setUserForm((prev) => ({
+        ...prev,
+        fullName: prev.fullName || chosen.name,
+        email: prev.email || autoEmail,
+        password: prev.password || autoPass,
+      }));
+    }
+  };
+
+  const handleQuickCreateUserForStudent = (item: SantriOption, targetRole: 'siswa' | 'orang_tua') => {
+    setTab('pengguna');
+    setPenggunaRoleFilter(targetRole);
+    if (targetRole === 'siswa') {
+      const sanitizedName = item.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const defaultEmail =
+        item.studentEmail ||
+        (item.nisn && item.nisn !== '-' ? `siswa.${item.nisn}@sekolah.id` : `${sanitizedName}@sekolah.id`);
+      const defaultPass = item.nisn && item.nisn !== '-' ? `Siswa${item.nisn}` : 'BkpDigital123';
+      setUserForm({
+        fullName: item.name,
+        email: defaultEmail,
+        password: defaultPass,
+        role: 'siswa',
+      });
+      setStudentLink(item.id);
+    } else {
+      const sanitizedName = item.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const defaultEmail =
+        item.waliEmail ||
+        (item.nisn && item.nisn !== '-' ? `ortu.${item.nisn}@sekolah.id` : `ortu.${sanitizedName}@sekolah.id`);
+      const defaultPass = item.nisn && item.nisn !== '-' ? `Ortu${item.nisn}` : 'BkpDigital123';
+      setUserForm({
+        fullName: item.waliName || `Orang Tua dari ${item.name}`,
+        email: defaultEmail,
+        password: defaultPass,
+        role: 'orang_tua',
+      });
+      setChildSelection([item.id]);
+    }
+    setNotice(`Form akun ${targetRole === 'siswa' ? 'Siswa' : 'Orang Tua'} disiapkan untuk "${item.name}". Periksa data lalu klik "Buat Akun".`);
+  };
+
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!profile || !isAdmin) {
       setError('Hanya administrator yang dapat menambah akun.');
-      return;
-    }
-    if (!isLocalBackend) {
-      setError('Di mode Firestore, akun login dibuat lewat Firebase Console, bukan dari panel ini.');
       return;
     }
 
@@ -471,8 +531,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setError(null);
     setNotice(null);
     try {
-      const credential = await hashPassword(userForm.password);
-      const uid = newUid();
+      const res = await createAccountThroughApp(email, userForm.password);
+      const uid = res.uid;
+      const credential = {
+        ...(res.passwordHash ? { passwordHash: res.passwordHash } : {}),
+        ...(res.passwordSalt ? { passwordSalt: res.passwordSalt } : {}),
+      };
       const linked =
         userForm.role === 'siswa'
           ? { studentId: studentLink }
@@ -500,12 +564,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         updatedAt: serverTimestamp(),
       });
       if (userForm.role === 'siswa' && studentLink) {
-        // Simpan email akun di master santri agar penelusuran lama tetap jalan.
         batch.set(
           doc(db, 'students', studentLink),
           { studentEmail: email, updatedAt: serverTimestamp() },
           { merge: true }
         );
+      } else if (userForm.role === 'orang_tua' && childSelection.length > 0) {
+        for (const cId of childSelection) {
+          batch.set(
+            doc(db, 'students', cId),
+            { waliEmail: email, updatedAt: serverTimestamp() },
+            { merge: true }
+          );
+        }
       }
       batch.set(
         newAuditRef(),
@@ -520,7 +591,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         })
       );
       await batch.commit();
-      setNotice(`Akun ${email} dibuat. Sampaikan kata sandi awal kepada pemiliknya.`);
+      setNotice(
+        `Akun ${roleLabel(userForm.role)} "${fullName}" (${email}) berhasil dibuat! Kata sandi: ${userForm.password}. Pengguna sudah dapat langsung login.`
+      );
       resetUserForm();
     } catch (err) {
       setError('Gagal membuat akun: ' + (err instanceof Error ? err.message : String(err)));
@@ -565,33 +638,43 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   const handleSavePassword = async (row: PenggunaRow) => {
     if (!profile || !isAdmin) return;
-    if (passwordValue.length < MIN_PASSWORD_LENGTH) {
-      setError(`Kata sandi minimal ${MIN_PASSWORD_LENGTH} karakter.`);
-      return;
-    }
     setBusy(true);
     setError(null);
     try {
-      const credential = await hashPassword(passwordValue);
-      const batch = writeBatch(db);
-      batch.update(doc(db, 'profiles', row.id), {
-        ...credential,
-        updatedAt: serverTimestamp(),
-      });
-      batch.set(
-        newAuditRef(),
-        buildAuditPayload({
-          actor: { uid: profile.uid, email: profile.email, role: profile.role },
-          action: 'user_update',
-          collectionName: 'profiles',
-          docId: row.id,
-          meta: { perubahan: 'kata sandi diatur ulang' },
-        })
-      );
-      await batch.commit();
-      setNotice(`Kata sandi ${row.email} sudah diperbarui.`);
-      setPasswordTarget(null);
-      setPasswordValue('');
+      if (!isLocalBackend) {
+        await sendPasswordResetThroughApp(row.email);
+        setNotice(
+          `Tautan setel ulang kata sandi telah dikirim ke email ${row.email}. Pemilik akun dapat membuka email tersebut untuk membuat kata sandi baru.`
+        );
+        setPasswordTarget(null);
+        setPasswordValue('');
+      } else {
+        if (passwordValue.length < MIN_PASSWORD_LENGTH) {
+          setError(`Kata sandi minimal ${MIN_PASSWORD_LENGTH} karakter.`);
+          setBusy(false);
+          return;
+        }
+        const credential = await hashPassword(passwordValue);
+        const batch = writeBatch(db);
+        batch.update(doc(db, 'profiles', row.id), {
+          ...credential,
+          updatedAt: serverTimestamp(),
+        });
+        batch.set(
+          newAuditRef(),
+          buildAuditPayload({
+            actor: { uid: profile.uid, email: profile.email, role: profile.role },
+            action: 'user_update',
+            collectionName: 'profiles',
+            docId: row.id,
+            meta: { perubahan: 'kata sandi diatur ulang' },
+          })
+        );
+        await batch.commit();
+        setNotice(`Kata sandi ${row.email} sudah diperbarui.`);
+        setPasswordTarget(null);
+        setPasswordValue('');
+      }
     } catch (err) {
       setError('Gagal mengubah kata sandi: ' + (err instanceof Error ? err.message : String(err)));
     } finally {
@@ -814,9 +897,31 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
               {/* Kategori poin */}
               <section className="bg-white rounded-2xl border border-green-100 shadow-sm p-4 space-y-3 lg:col-span-2">
-                <h2 className="text-sm font-bold flex items-center gap-2">
-                  <ListChecks className="w-4 h-4 text-[#2E7D32]" /> Kategori Poin
-                </h2>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="text-sm font-bold flex items-center gap-2">
+                    <ListChecks className="w-4 h-4 text-[#2E7D32]" /> Kategori Poin
+                  </h2>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={downloadTemplateKategori}
+                      className="px-2.5 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-xs font-semibold flex items-center gap-1 transition-colors"
+                      title="Unduh Format Template Excel Kategori Poin"
+                    >
+                      <Download className="w-3.5 h-3.5 text-gray-600" />
+                      <span>Format Excel</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowImportKategori(true)}
+                      className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-colors"
+                      title="Import Kategori Poin dari Excel"
+                    >
+                      <FileSpreadsheet className="w-3.5 h-3.5 text-[#2E7D32]" />
+                      <span>Import Excel</span>
+                    </button>
+                  </div>
+                </div>
                 <form onSubmit={handleAddKategori} className="grid grid-cols-2 md:grid-cols-6 gap-2">
                   <input
                     value={newKategori.kode}
@@ -932,18 +1037,41 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     {santri.length} santri terdaftar. NISN dipakai sebagai penanda unik.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEditingSantri(null);
-                    setShowTambahSantri(true);
-                  }}
-                  disabled={!isAdmin}
-                  className="flex min-h-11 items-center gap-2 rounded-xl bg-[#2E7D32] px-4 text-xs font-bold text-white hover:bg-[#1B5E20] disabled:bg-gray-300 shadow-sm"
-                >
-                  <UserPlus className="h-4 w-4" aria-hidden="true" />
-                  Tambah Santri
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={downloadTemplateSiswa}
+                    className="flex min-h-11 items-center gap-1.5 rounded-xl bg-gray-100 hover:bg-gray-200 px-3.5 text-xs font-semibold text-gray-700 transition-colors shadow-2xs"
+                    title="Unduh Format Template Excel Data Santri"
+                  >
+                    <Download className="h-4 w-4 text-gray-600" aria-hidden="true" />
+                    <span>Format Excel</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowImportSiswa(true)}
+                    disabled={!isAdmin}
+                    className="flex min-h-11 items-center gap-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 px-3.5 text-xs font-bold text-emerald-800 transition-colors shadow-2xs disabled:bg-gray-100 disabled:opacity-50"
+                    title="Import Data Santri Massal dari Excel"
+                  >
+                    <FileSpreadsheet className="h-4 w-4 text-[#2E7D32]" aria-hidden="true" />
+                    <span>Import Excel</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingSantri(null);
+                      setShowTambahSantri(true);
+                    }}
+                    disabled={!isAdmin}
+                    className="flex min-h-11 items-center gap-2 rounded-xl bg-[#2E7D32] px-4 text-xs font-bold text-white hover:bg-[#1B5E20] disabled:bg-gray-300 shadow-sm"
+                  >
+                    <UserPlus className="h-4 w-4" aria-hidden="true" />
+                    <span>Tambah Santri</span>
+                  </button>
+                </div>
               </div>
 
               {!isAdmin && (
@@ -1025,6 +1153,48 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                             <div className="flex items-center justify-end gap-1">
                               <button
                                 type="button"
+                                onClick={() => handleQuickCreateUserForStudent(row, 'siswa')}
+                                className={`p-1.5 rounded-lg text-xs flex items-center gap-1 transition-colors ${
+                                  pengguna.some((p) => p.role === 'siswa' && p.studentId === row.id)
+                                    ? 'text-blue-700 bg-blue-50 hover:bg-blue-100'
+                                    : 'text-gray-500 hover:bg-blue-50 hover:text-blue-700'
+                                }`}
+                                title={
+                                  pengguna.some((p) => p.role === 'siswa' && p.studentId === row.id)
+                                    ? 'Akun Siswa sudah aktif (klik untuk kelola)'
+                                    : 'Buat akun login Siswa untuk santri ini'
+                                }
+                              >
+                                <UserPlus className="w-3.5 h-3.5" />
+                                <span className="hidden xl:inline text-[11px] font-medium">
+                                  {pengguna.some((p) => p.role === 'siswa' && p.studentId === row.id)
+                                    ? 'Siswa ✓'
+                                    : '+ Siswa'}
+                                </span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleQuickCreateUserForStudent(row, 'orang_tua')}
+                                className={`p-1.5 rounded-lg text-xs flex items-center gap-1 transition-colors ${
+                                  pengguna.some((p) => p.role === 'orang_tua' && p.childIds.includes(row.id))
+                                    ? 'text-amber-700 bg-amber-50 hover:bg-amber-100'
+                                    : 'text-gray-500 hover:bg-amber-50 hover:text-amber-700'
+                                }`}
+                                title={
+                                  pengguna.some((p) => p.role === 'orang_tua' && p.childIds.includes(row.id))
+                                    ? 'Akun Orang Tua sudah aktif (klik untuk kelola)'
+                                    : 'Buat akun login Orang Tua untuk santri ini'
+                                }
+                              >
+                                <Users className="w-3.5 h-3.5" />
+                                <span className="hidden xl:inline text-[11px] font-medium">
+                                  {pengguna.some((p) => p.role === 'orang_tua' && p.childIds.includes(row.id))
+                                    ? 'Ortu ✓'
+                                    : '+ Ortu'}
+                                </span>
+                              </button>
+                              <button
+                                type="button"
                                 onClick={() => {
                                   setEditingSantri({
                                     id: row.id,
@@ -1094,6 +1264,29 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 actorRole={profile?.role}
                 actor={profile ? { uid: profile.uid, email: profile.email ?? null } : null}
               />
+
+              <ImportSiswaModal
+                isOpen={showImportSiswa}
+                onClose={() => setShowImportSiswa(false)}
+                onSuccess={(count) => {
+                  setNotice(`Alhamdulillah! Berhasil mengimpor ${count} data santri ke sistem.`);
+                  setShowImportSiswa(false);
+                }}
+                existingNisns={new Set(santri.map((s) => s.nisn.toLowerCase()))}
+                existingKelas={kelas.map((k) => k.nama)}
+                existingRayon={rayon.map((r) => r.nama)}
+                actor={profile ? { uid: profile.uid, email: profile.email ?? null, role: profile.role } : null}
+              />
+
+              <ImportKategoriModal
+                isOpen={showImportKategori}
+                onClose={() => setShowImportKategori(false)}
+                onSuccess={(count) => {
+                  setNotice(`Alhamdulillah! Berhasil mengimpor ${count} kategori poin ke sistem.`);
+                  setShowImportKategori(false);
+                }}
+                actor={profile ? { uid: profile.uid, email: profile.email ?? null, role: profile.role } : null}
+              />
             </section>
           )}
 
@@ -1101,301 +1294,445 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             <div className="space-y-4">
               <section className="bg-white rounded-2xl border border-green-100 shadow-sm p-4 space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h2 className="text-sm font-bold flex items-center gap-2">
-                    <UserPlus className="w-4 h-4 text-[#2E7D32]" aria-hidden="true" /> Tambah akun
-                  </h2>
-                  <span className="text-xs text-gray-500">{pengguna.length} akun terdaftar</span>
+                  <div>
+                    <h2 className="text-sm font-bold flex items-center gap-2">
+                      <UserPlus className="w-4 h-4 text-[#2E7D32]" aria-hidden="true" /> Buat Akun Pengguna Baru
+                    </h2>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Buat akun login langsung melalui aplikasi untuk Siswa, Orang Tua, Guru / BK, Rayon, atau Admin.
+                    </p>
+                  </div>
+                  <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-green-50 text-green-800 border border-green-200">
+                    {pengguna.length} akun terdaftar
+                  </span>
                 </div>
 
-                {!isLocalBackend ? (
-                  <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-800">
-                    Di mode Firestore, akun login dibuat di Firebase Console pada menu Authentication,
-                    lalu profilnya dihubungkan di sini. Form di bawah hanya aktif di mode lokal.
-                  </p>
-                ) : (
-                  <form onSubmit={handleAddUser} className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                    <div>
-                      <label htmlFor="user-name" className="mb-1 block text-xs font-semibold">
-                        Nama lengkap
-                      </label>
-                      <input
-                        id="user-name"
-                        value={userForm.fullName}
-                        onChange={(e) => setUserForm({ ...userForm, fullName: e.target.value })}
-                        placeholder="Contoh: Ust. Ahmad Fauzi"
-                        className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs outline-none focus:border-[#2E7D32]"
-                      />
-                    </div>
-                    <div>
-                      <label htmlFor="user-email" className="mb-1 block text-xs font-semibold">
-                        Email masuk
-                      </label>
-                      <input
-                        id="user-email"
-                        type="email"
-                        inputMode="email"
-                        autoComplete="off"
-                        value={userForm.email}
-                        onChange={(e) => setUserForm({ ...userForm, email: e.target.value })}
-                        placeholder="nama@thibbilqulub.sch.id"
-                        className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs outline-none focus:border-[#2E7D32]"
-                      />
-                    </div>
-                    <div>
-                      <label htmlFor="user-password" className="mb-1 block text-xs font-semibold">
-                        Kata sandi awal
-                      </label>
-                      <input
-                        id="user-password"
-                        type="password"
-                        autoComplete="new-password"
-                        value={userForm.password}
-                        onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
-                        placeholder={`Minimal ${MIN_PASSWORD_LENGTH} karakter`}
-                        className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs outline-none focus:border-[#2E7D32]"
-                      />
-                    </div>
-                    <div>
-                      <label htmlFor="user-role" className="mb-1 block text-xs font-semibold">
-                        Peran
-                      </label>
+                <form onSubmit={handleAddUser} className="grid grid-cols-1 gap-3 md:grid-cols-2 pt-1">
+                  <div>
+                    <label htmlFor="user-role" className="mb-1 block text-xs font-semibold text-gray-700">
+                      Peran Akun
+                    </label>
+                    <select
+                      id="user-role"
+                      value={userForm.role}
+                      onChange={(e) => {
+                        const newRole = e.target.value as Role;
+                        setUserForm({ ...userForm, role: newRole });
+                        if (newRole === 'siswa' && !studentLink && santri.length > 0) {
+                          handleSelectStudentForUser(santri[0].id);
+                        }
+                      }}
+                      className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs font-medium outline-none focus:border-[#2E7D32]"
+                    >
+                      <option value="siswa">Santri / Siswa</option>
+                      <option value="orang_tua">Orang Tua / Wali Santri</option>
+                      <option value="guru">Guru / Guru BK</option>
+                      <option value="pembimbing_rayon">Pembimbing Rayon</option>
+                      <option value="admin">Administrator Sekolah</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label htmlFor="user-name" className="mb-1 block text-xs font-semibold text-gray-700">
+                      Nama Lengkap
+                    </label>
+                    <input
+                      id="user-name"
+                      value={userForm.fullName}
+                      onChange={(e) => setUserForm({ ...userForm, fullName: e.target.value })}
+                      placeholder="Contoh: Muhammad Zaki / Ust. Ahmad Fauzi"
+                      className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs outline-none focus:border-[#2E7D32]"
+                    />
+                  </div>
+
+                  <div>
+                    <label htmlFor="user-email" className="mb-1 block text-xs font-semibold text-gray-700">
+                      Email Masuk (Login ID)
+                    </label>
+                    <input
+                      id="user-email"
+                      type="email"
+                      inputMode="email"
+                      autoComplete="off"
+                      value={userForm.email}
+                      onChange={(e) => setUserForm({ ...userForm, email: e.target.value })}
+                      placeholder="nama@sekolah.id atau email pribadi"
+                      className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs outline-none focus:border-[#2E7D32]"
+                    />
+                  </div>
+
+                  <div>
+                    <label htmlFor="user-password" className="mb-1 block text-xs font-semibold text-gray-700">
+                      Kata Sandi Awal
+                    </label>
+                    <input
+                      id="user-password"
+                      type="text"
+                      autoComplete="new-password"
+                      value={userForm.password}
+                      onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
+                      placeholder={`Minimal ${MIN_PASSWORD_LENGTH} karakter (contoh: BkpDigital123)`}
+                      className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs outline-none focus:border-[#2E7D32]"
+                    />
+                  </div>
+
+                  {userForm.role === 'siswa' && (
+                    <div className="md:col-span-2 bg-blue-50/50 p-3 rounded-xl border border-blue-100 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label htmlFor="user-student" className="block text-xs font-semibold text-blue-900">
+                          Tautkan ke Master Santri
+                        </label>
+                        <span className="text-[11px] text-blue-600">
+                          Memilih santri otomatis mengisi nama & saran email
+                        </span>
+                      </div>
                       <select
-                        id="user-role"
-                        value={userForm.role}
-                        onChange={(e) => setUserForm({ ...userForm, role: e.target.value as Role })}
-                        className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs outline-none focus:border-[#2E7D32]"
+                        id="user-student"
+                        value={studentLink}
+                        onChange={(e) => handleSelectStudentForUser(e.target.value)}
+                        className="w-full rounded-xl border border-blue-200 bg-white px-3 py-2 text-xs outline-none focus:border-[#2E7D32]"
                       >
-                        <option value="siswa">Santri</option>
-                        <option value="orang_tua">Orang tua / wali</option>
-                        <option value="guru">Guru / BK</option>
-                        <option value="pembimbing_rayon">Pembimbing rayon</option>
-                        <option value="admin">Administrator</option>
+                        <option value="">-- Pilih Santri --</option>
+                        {santri.map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.name} · Kelas {item.kelas} · NISN {item.nisn}
+                          </option>
+                        ))}
                       </select>
+                      {studentLink && (
+                        <p className="text-[11px] text-blue-700 font-medium">
+                          ✓ Akun ini akan langsung menampilkan poin, jadwal pelajaran, dan catatan perilaku santri yang bersangkutan.
+                        </p>
+                      )}
                     </div>
+                  )}
 
-                    {userForm.role === 'siswa' && (
-                      <div className="md:col-span-2">
-                        <label htmlFor="user-student" className="mb-1 block text-xs font-semibold">
-                          Santri yang ditautkan
-                        </label>
-                        <select
-                          id="user-student"
-                          value={studentLink}
-                          onChange={(e) => setStudentLink(e.target.value)}
-                          className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs outline-none focus:border-[#2E7D32]"
-                        >
-                          <option value="">Pilih santri</option>
-                          {santri.map((item) => (
-                            <option key={item.id} value={item.id}>
-                              {item.name} ({item.kelas})
-                            </option>
-                          ))}
-                        </select>
+                  {userForm.role === 'orang_tua' && (
+                    <fieldset className="md:col-span-2 bg-amber-50/50 p-3 rounded-xl border border-amber-100 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <legend className="text-xs font-semibold text-amber-900">
+                          Pilih Anak (Santri) yang Ditautkan ke Orang Tua
+                        </legend>
+                        <span className="text-[11px] text-amber-700">Bisa memilih lebih dari 1 anak</span>
                       </div>
-                    )}
-
-                    {userForm.role === 'pembimbing_rayon' && (
-                      <div className="md:col-span-2">
-                        <label htmlFor="user-rayon" className="mb-1 block text-xs font-semibold">
-                          Rayon yang menjadi kewenangan
-                        </label>
-                        <input
-                          id="user-rayon"
-                          list="daftar-rayon"
-                          value={rayonLink}
-                          onChange={(e) => setRayonLink(e.target.value)}
-                          placeholder="Contoh: Rayon Assimbani 1"
-                          className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs outline-none focus:border-[#2E7D32]"
-                        />
-                        <datalist id="daftar-rayon">
-                          {rayon.map((item) => (
-                            <option key={item.id} value={item.nama} />
-                          ))}
-                        </datalist>
-                      </div>
-                    )}
-
-                    {userForm.role === 'orang_tua' && (
-                      <fieldset className="md:col-span-2">
-                        <legend className="mb-1 text-xs font-semibold">Anak yang ditautkan</legend>
-                        <div className="grid max-h-40 grid-cols-1 gap-1 overflow-y-auto rounded-xl border border-gray-200 bg-gray-50 p-2 sm:grid-cols-2">
-                          {santri.map((item) => (
-                            <label
-                              key={item.id}
-                              className="flex min-h-11 items-center gap-2 rounded-lg px-2 text-xs"
-                            >
-                              <input
-                                type="checkbox"
-                                checked={childSelection.includes(item.id)}
-                                onChange={(e) =>
-                                  setChildSelection((prev) =>
-                                    e.target.checked
-                                      ? [...prev, item.id]
-                                      : prev.filter((id) => id !== item.id)
-                                  )
-                                }
-                                className="h-4 w-4 accent-[#2E7D32]"
-                              />
-                              <span>
-                                {item.name}
-                                <span className="text-gray-400"> ({item.kelas})</span>
-                              </span>
-                            </label>
-                          ))}
-                          {santri.length === 0 && (
-                            <span className="px-2 py-1 text-xs text-gray-400">
-                              Belum ada data santri.
+                      <div className="grid max-h-40 grid-cols-1 gap-1.5 overflow-y-auto rounded-xl border border-amber-200 bg-white p-2 sm:grid-cols-2">
+                        {santri.map((item) => (
+                          <label
+                            key={item.id}
+                            className="flex min-h-9 items-center gap-2 rounded-lg px-2 text-xs hover:bg-amber-50 cursor-pointer"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={childSelection.includes(item.id)}
+                              onChange={(e) =>
+                                setChildSelection((prev) =>
+                                  e.target.checked
+                                    ? [...prev, item.id]
+                                    : prev.filter((id) => id !== item.id)
+                                )
+                              }
+                              className="h-4 w-4 accent-[#2E7D32]"
+                            />
+                            <span className="text-gray-800">
+                              <span className="font-medium">{item.name}</span>
+                              <span className="text-gray-400"> ({item.kelas})</span>
                             </span>
-                          )}
-                        </div>
-                      </fieldset>
-                    )}
+                          </label>
+                        ))}
+                        {santri.length === 0 && (
+                          <span className="px-2 py-1 text-xs text-gray-400">
+                            Belum ada master santri terdaftar.
+                          </span>
+                        )}
+                      </div>
+                    </fieldset>
+                  )}
 
-                    <div className="md:col-span-2">
-                      <button
-                        type="submit"
-                        disabled={busy}
-                        className="min-h-11 rounded-xl bg-[#2E7D32] px-4 text-xs font-bold text-white hover:bg-[#1B5E20] disabled:bg-gray-300"
-                      >
-                        Buat akun
-                      </button>
+                  {userForm.role === 'pembimbing_rayon' && (
+                    <div className="md:col-span-2 bg-purple-50/50 p-3 rounded-xl border border-purple-100 space-y-1">
+                      <label htmlFor="user-rayon" className="block text-xs font-semibold text-purple-900">
+                        Rayon yang Menjadi Kewenangan
+                      </label>
+                      <input
+                        id="user-rayon"
+                        list="daftar-rayon"
+                        value={rayonLink}
+                        onChange={(e) => setRayonLink(e.target.value)}
+                        placeholder="Pilih atau ketik nama rayon (contoh: Rayon Siti Aisyah 1)"
+                        className="w-full rounded-xl border border-purple-200 bg-white px-3 py-2 text-xs outline-none focus:border-[#2E7D32]"
+                      />
+                      <datalist id="daftar-rayon">
+                        {rayon.map((item) => (
+                          <option key={item.id} value={item.nama} />
+                        ))}
+                      </datalist>
                     </div>
-                  </form>
-                )}
+                  )}
+
+                  {userForm.role === 'guru' && (
+                    <div className="md:col-span-2 bg-emerald-50/60 p-3 rounded-xl border border-emerald-100 text-xs text-emerald-800 leading-relaxed">
+                      💡 <strong>Akses Guru & BK:</strong> Akun ini dapat masuk ke Dashboard Guru untuk mencatat apresiasi poin santri, pelanggaran, bimbingan konseling, serta memvalidasi pengajuan prestasi santri.
+                    </div>
+                  )}
+
+                  {userForm.role === 'admin' && (
+                    <div className="md:col-span-2 bg-rose-50/60 p-3 rounded-xl border border-rose-100 text-xs text-rose-800 leading-relaxed">
+                      ⚠️ <strong>Akses Administrator:</strong> Akun ini memiliki izin penuh untuk mengelola Master Data (Kelas, Rayon, Kategori Poin), menghapus data, dan mengatur seluruh akun pengguna.
+                    </div>
+                  )}
+
+                  <div className="md:col-span-2 pt-1 flex items-center justify-between">
+                    <button
+                      type="submit"
+                      disabled={busy}
+                      className="min-h-11 rounded-xl bg-[#2E7D32] px-5 text-xs font-bold text-white hover:bg-[#1B5E20] disabled:bg-gray-300 shadow-sm flex items-center gap-2"
+                    >
+                      <UserPlus className="w-4 h-4" />
+                      {busy ? 'Menyimpan Akun...' : 'Buat Akun Sekarang'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={resetUserForm}
+                      disabled={busy}
+                      className="text-xs text-gray-500 hover:text-gray-700 underline"
+                    >
+                      Bersihkan form
+                    </button>
+                  </div>
+                </form>
               </section>
 
+              {/* Daftar Akun */}
               <section className="bg-white rounded-2xl border border-green-100 shadow-sm p-4 space-y-3">
-                <h2 className="text-sm font-bold flex items-center gap-2">
-                  <Users className="w-4 h-4 text-[#2E7D32]" aria-hidden="true" /> Daftar akun
-                </h2>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="text-sm font-bold flex items-center gap-2">
+                    <Users className="w-4 h-4 text-[#2E7D32]" aria-hidden="true" /> Daftar Akun Pengguna
+                  </h2>
+                </div>
 
-                <div className="overflow-x-auto">
+                {/* Filter Peran & Pencarian */}
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                    {[
+                      { key: 'semua', label: 'Semua', count: pengguna.length },
+                      { key: 'guru', label: 'Guru & BK', count: pengguna.filter((p) => p.role === 'guru').length },
+                      { key: 'pembimbing_rayon', label: 'Rayon', count: pengguna.filter((p) => p.role === 'pembimbing_rayon').length },
+                      { key: 'siswa', label: 'Siswa', count: pengguna.filter((p) => p.role === 'siswa').length },
+                      { key: 'orang_tua', label: 'Orang Tua', count: pengguna.filter((p) => p.role === 'orang_tua').length },
+                      { key: 'admin', label: 'Admin', count: pengguna.filter((p) => p.role === 'admin').length },
+                    ].map((f) => (
+                      <button
+                        key={f.key}
+                        type="button"
+                        onClick={() => setPenggunaRoleFilter(f.key as any)}
+                        className={`px-3 py-1.5 rounded-xl font-medium transition-all ${
+                          penggunaRoleFilter === f.key
+                            ? 'bg-[#2E7D32] text-white shadow-sm font-bold'
+                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        }`}
+                      >
+                        {f.label} ({f.count})
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center gap-2 bg-gray-50 px-3 py-1.5 rounded-xl border border-gray-200 text-xs min-w-[200px]">
+                    <Search className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                    <input
+                      type="text"
+                      placeholder="Cari nama atau email..."
+                      value={penggunaSearch}
+                      onChange={(e) => setPenggunaSearch(e.target.value)}
+                      className="w-full bg-transparent outline-none text-xs"
+                    />
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto rounded-xl border border-gray-100">
                   <table className="w-full text-left text-xs">
                     <thead className="bg-gray-50 text-gray-500">
                       <tr>
-                        <th className="p-2">Nama</th>
-                        <th className="p-2">Email</th>
-                        <th className="p-2">Peran</th>
-                        <th className="p-2">Tautan</th>
-                        <th className="p-2">Status</th>
-                        <th className="p-2 text-right">Aksi</th>
+                        <th className="p-2.5">Nama Lengkap</th>
+                        <th className="p-2.5">Email Masuk</th>
+                        <th className="p-2.5">Peran</th>
+                        <th className="p-2.5">Tautan Siswa/Rayon</th>
+                        <th className="p-2.5">Status</th>
+                        <th className="p-2.5 text-right">Aksi</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {pengguna.map((row) => {
-                        const tautan =
-                          row.role === 'siswa'
-                            ? santri.find((item) => item.id === row.studentId)?.name || row.studentId || 'Belum ditautkan'
-                            : row.role === 'orang_tua'
-                              ? row.childIds
-                                  .map((id) => santri.find((item) => item.id === id)?.name || id)
-                                  .join(', ') || 'Belum ditautkan'
-                              : row.role === 'pembimbing_rayon'
-                                ? row.rayonId || 'Belum ditautkan'
-                                : '-';
-                        return (
-                          <tr key={row.id}>
-                            <td className="p-2 font-semibold">
-                              {row.fullName}
-                              {row.id === profile?.uid && (
-                                <span className="ml-1 text-xs font-normal text-gray-400">(Anda)</span>
-                              )}
-                            </td>
-                            <td className="p-2">{row.email || '-'}</td>
-                            <td className="p-2">{roleLabel(row.role)}</td>
-                            <td className="p-2">{tautan}</td>
-                            <td className="p-2">
-                              <span
-                                className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                                  row.active
-                                    ? 'bg-green-50 text-green-800'
-                                    : 'bg-gray-100 text-gray-600'
-                                }`}
-                              >
-                                {row.active ? 'Aktif' : 'Nonaktif'}
-                              </span>
-                            </td>
-                            <td className="p-2">
-                              <div className="flex items-center justify-end gap-1">
-                                <button
-                                  onClick={() => {
-                                    setPasswordTarget(row.id);
-                                    setPasswordValue('');
-                                    setError(null);
-                                  }}
-                                  className="min-h-11 rounded-lg px-2 text-gray-500 hover:text-[#2E7D32]"
-                                  title="Atur ulang kata sandi"
-                                >
-                                  <KeyRound className="h-4 w-4" aria-hidden="true" />
-                                  <span className="sr-only">Atur ulang kata sandi {row.email}</span>
-                                </button>
-                                <button
-                                  onClick={() => handleToggleActive(row)}
-                                  disabled={busy || row.id === profile?.uid}
-                                  className="min-h-11 rounded-lg px-2 text-gray-500 hover:text-[#2E7D32] disabled:opacity-40"
-                                  title={row.active ? 'Nonaktifkan akun' : 'Aktifkan akun'}
-                                >
-                                  {row.active ? (
-                                    <UserX className="h-4 w-4" aria-hidden="true" />
-                                  ) : (
-                                    <UserCheck className="h-4 w-4" aria-hidden="true" />
-                                  )}
-                                  <span className="sr-only">
-                                    {row.active ? 'Nonaktifkan' : 'Aktifkan'} {row.email}
+                      {pengguna
+                        .filter((u) => {
+                          const matchRole =
+                            penggunaRoleFilter === 'semua' || u.role === penggunaRoleFilter;
+                          const matchSearch =
+                            !penggunaSearch ||
+                            u.fullName.toLowerCase().includes(penggunaSearch.toLowerCase()) ||
+                            u.email.toLowerCase().includes(penggunaSearch.toLowerCase());
+                          return matchRole && matchSearch;
+                        })
+                        .map((row) => {
+                          const tautan =
+                            row.role === 'siswa'
+                              ? santri.find((item) => item.id === row.studentId)?.name ||
+                                row.studentId ||
+                                'Belum ditautkan'
+                              : row.role === 'orang_tua'
+                                ? row.childIds
+                                    .map((id) => santri.find((item) => item.id === id)?.name || id)
+                                    .join(', ') || 'Belum ditautkan'
+                                : row.role === 'pembimbing_rayon'
+                                  ? row.rayonId || 'Belum ditautkan'
+                                  : '-';
+
+                          const roleBadgeStyle =
+                            row.role === 'siswa'
+                              ? 'bg-blue-50 text-blue-800 border-blue-200'
+                              : row.role === 'orang_tua'
+                                ? 'bg-amber-50 text-amber-800 border-amber-200'
+                                : row.role === 'guru'
+                                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                  : row.role === 'pembimbing_rayon'
+                                    ? 'bg-purple-50 text-purple-800 border-purple-200'
+                                    : 'bg-rose-50 text-rose-800 border-rose-200';
+
+                          return (
+                            <tr key={row.id} className="hover:bg-gray-50/80">
+                              <td className="p-2.5 font-semibold text-gray-900">
+                                {row.fullName}
+                                {row.id === profile?.uid && (
+                                  <span className="ml-1 text-[11px] font-normal text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                                    (Anda)
                                   </span>
-                                </button>
-                                <button
-                                  onClick={() => handleDeleteUser(row)}
-                                  disabled={busy || row.id === profile?.uid}
-                                  className="min-h-11 rounded-lg px-2 text-red-500 hover:text-red-700 disabled:opacity-40"
-                                  title="Hapus akun"
+                                )}
+                              </td>
+                              <td className="p-2.5 font-mono text-gray-700">{row.email || '-'}</td>
+                              <td className="p-2.5">
+                                <span className={`px-2 py-0.5 rounded-md border text-[11px] font-semibold ${roleBadgeStyle}`}>
+                                  {roleLabel(row.role)}
+                                </span>
+                              </td>
+                              <td className="p-2.5 text-gray-600">{tautan}</td>
+                              <td className="p-2.5">
+                                <span
+                                  className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                                    row.active
+                                      ? 'bg-green-50 text-green-800 border border-green-200'
+                                      : 'bg-gray-100 text-gray-600'
+                                  }`}
                                 >
-                                  <Trash2 className="h-4 w-4" aria-hidden="true" />
-                                  <span className="sr-only">Hapus akun {row.email}</span>
-                                </button>
-                              </div>
-                              {passwordTarget === row.id && (
-                                <div className="mt-2 flex flex-col items-end gap-2">
-                                  <label htmlFor={`password-${row.id}`} className="text-xs text-gray-500">
-                                    Kata sandi baru untuk {row.email}
-                                  </label>
-                                  <input
-                                    id={`password-${row.id}`}
-                                    type="password"
-                                    autoComplete="new-password"
-                                    value={passwordValue}
-                                    onChange={(e) => setPasswordValue(e.target.value)}
-                                    placeholder={`Minimal ${MIN_PASSWORD_LENGTH} karakter`}
-                                    className="w-56 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs outline-none focus:border-[#2E7D32]"
-                                  />
-                                  <div className="flex gap-2">
-                                    <button
-                                      onClick={() => handleSavePassword(row)}
-                                      disabled={busy}
-                                      className="min-h-11 rounded-xl bg-[#2E7D32] px-3 text-xs font-bold text-white disabled:bg-gray-300"
-                                    >
-                                      Simpan
-                                    </button>
-                                    <button
-                                      onClick={() => {
-                                        setPasswordTarget(null);
-                                        setPasswordValue('');
-                                      }}
-                                      className="min-h-11 rounded-xl border border-gray-200 px-3 text-xs font-semibold text-gray-600"
-                                    >
-                                      Batal
-                                    </button>
-                                  </div>
+                                  {row.active ? 'Aktif' : 'Nonaktif'}
+                                </span>
+                              </td>
+                              <td className="p-2.5">
+                                <div className="flex items-center justify-end gap-1">
+                                  <button
+                                    onClick={() => {
+                                      setPasswordTarget(row.id);
+                                      setPasswordValue('');
+                                      setError(null);
+                                    }}
+                                    className="p-1.5 rounded-lg text-gray-500 hover:text-[#2E7D32] hover:bg-green-50"
+                                    title="Atur ulang kata sandi"
+                                  >
+                                    <KeyRound className="h-4 w-4" aria-hidden="true" />
+                                    <span className="sr-only">Atur ulang kata sandi {row.email}</span>
+                                  </button>
+                                  <button
+                                    onClick={() => handleToggleActive(row)}
+                                    disabled={busy || row.id === profile?.uid}
+                                    className="p-1.5 rounded-lg text-gray-500 hover:text-[#2E7D32] hover:bg-green-50 disabled:opacity-40"
+                                    title={row.active ? 'Nonaktifkan akun' : 'Aktifkan akun'}
+                                  >
+                                    {row.active ? (
+                                      <UserX className="h-4 w-4" aria-hidden="true" />
+                                    ) : (
+                                      <UserCheck className="h-4 w-4" aria-hidden="true" />
+                                    )}
+                                    <span className="sr-only">
+                                      {row.active ? 'Nonaktifkan' : 'Aktifkan'} {row.email}
+                                    </span>
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteUser(row)}
+                                    disabled={busy || row.id === profile?.uid}
+                                    className="p-1.5 rounded-lg text-red-500 hover:text-red-700 hover:bg-red-50 disabled:opacity-40"
+                                    title="Hapus akun"
+                                  >
+                                    <Trash2 className="h-4 w-4" aria-hidden="true" />
+                                    <span className="sr-only">Hapus akun {row.email}</span>
+                                  </button>
                                 </div>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
+                                {passwordTarget === row.id && (
+                                  <div className="mt-2 flex flex-col items-end gap-2 p-3 bg-gray-50 rounded-xl border border-gray-200">
+                                    <p className="text-xs text-gray-700 font-medium">
+                                      Setel ulang kata sandi untuk <span className="font-bold">{row.email}</span>
+                                    </p>
+                                    {!isLocalBackend ? (
+                                      <div className="flex flex-col items-end gap-2">
+                                        <p className="text-[11px] text-gray-500 text-right max-w-xs">
+                                          Kirim tautan reset kata sandi resmi ke email pengguna ini:
+                                        </p>
+                                        <div className="flex gap-2">
+                                          <button
+                                            onClick={() => handleSavePassword(row)}
+                                            disabled={busy}
+                                            className="min-h-11 rounded-xl bg-[#2E7D32] px-3 text-xs font-bold text-white hover:bg-[#1B5E20] disabled:bg-gray-300"
+                                          >
+                                            Kirim Tautan Reset Email
+                                          </button>
+                                          <button
+                                            onClick={() => {
+                                              setPasswordTarget(null);
+                                              setPasswordValue('');
+                                            }}
+                                            className="min-h-11 rounded-xl border border-gray-200 px-3 text-xs font-semibold text-gray-600 hover:bg-gray-100"
+                                          >
+                                            Batal
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <>
+                                        <input
+                                          id={`password-${row.id}`}
+                                          type="password"
+                                          autoComplete="new-password"
+                                          value={passwordValue}
+                                          onChange={(e) => setPasswordValue(e.target.value)}
+                                          placeholder={`Minimal ${MIN_PASSWORD_LENGTH} karakter`}
+                                          className="w-56 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs outline-none focus:border-[#2E7D32]"
+                                        />
+                                        <div className="flex gap-2">
+                                          <button
+                                            onClick={() => handleSavePassword(row)}
+                                            disabled={busy}
+                                            className="min-h-11 rounded-xl bg-[#2E7D32] px-3 text-xs font-bold text-white disabled:bg-gray-300"
+                                          >
+                                            Simpan Sandi Baru
+                                          </button>
+                                          <button
+                                            onClick={() => {
+                                              setPasswordTarget(null);
+                                              setPasswordValue('');
+                                            }}
+                                            className="min-h-11 rounded-xl border border-gray-200 px-3 text-xs font-semibold text-gray-600"
+                                          >
+                                            Batal
+                                          </button>
+                                        </div>
+                                      </>
+                                    )}
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
                       {pengguna.length === 0 && (
                         <tr>
-                          <td colSpan={6} className="p-3 text-gray-400">
-                            Belum ada akun terbaca.
+                          <td colSpan={6} className="p-3 text-center text-gray-400">
+                            Belum ada akun terdaftar. Gunakan formulir di atas untuk membuat akun pertama.
                           </td>
                         </tr>
                       )}
@@ -1403,12 +1740,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   </table>
                 </div>
 
-                {isLocalBackend && (
-                  <p className="text-xs leading-relaxed text-gray-500">
-                    Kata sandi disimpan sebagai hash di peramban ini, bukan di server. Akun yang dibuat
-                    di sini hanya berlaku pada peramban dan perangkat yang sama.
-                  </p>
-                )}
+                <p className="text-xs leading-relaxed text-gray-500 pt-1">
+                  💡 Akun yang dibuat dapat langsung dipakai untuk masuk ke aplikasi. Pengguna dapat memilih opsi &ldquo;Masuk&rdquo; pada menu utama sesuai perannya.
+                </p>
               </section>
             </div>
           )}

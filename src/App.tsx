@@ -105,6 +105,11 @@ export default function App() {
           onTogglePassword={() => setShowPassword((v) => !v)}
           onSubmit={() => handleLogin()}
           onResetLocal={handleResetLocal}
+          onSendPasswordReset={app.handleSendPasswordReset}
+          resetSentEmail={app.resetSentEmail}
+          resetLoading={app.resetLoading}
+          onLoginGoogle={app.handleLoginGoogle}
+          googleLoading={app.googleLoading}
         />
       )}
 

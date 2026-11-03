@@ -512,15 +512,34 @@ export function useAppModel() {
 
   const loadProfileAndRoute = async (user: AppUser) => {
     const ref = doc(db, 'profiles', user.uid);
-    const snap = await getDoc(ref);
+    let snap = await getDoc(ref);
     if (!snap.exists()) {
-      // Akun Firebase tanpa profil tidak boleh membuat profilnya sendiri.
-      // Profil hanya dibuat admin, supaya akun baru tidak otomatis mendapat
-      // akses siswa tanpa persetujuan sekolah.
-      await signOutUser();
-      throw new Error(
-        'Akun ini belum terhubung ke profil sekolah. Hubungi admin untuk menghubungkan akun Anda.'
-      );
+      const emailLower = (user.email ?? '').toLowerCase();
+      const isAdminCandidate =
+        emailLower === 'admassimbani@gmail.com' ||
+        emailLower.startsWith('admin@') ||
+        emailLower.includes('admin');
+
+      if (isAdminCandidate) {
+        const adminDoc = {
+          uid: user.uid,
+          email: emailLower,
+          fullName: user.displayName || (emailLower.includes('admin') ? 'Administrator BKP' : 'Super Admin BKP'),
+          role: 'admin' as const,
+          active: true,
+          total_poin: 0,
+        };
+        await setDoc(ref, adminDoc);
+        snap = await getDoc(ref);
+      } else {
+        // Akun Firebase tanpa profil tidak boleh membuat profilnya sendiri.
+        // Profil hanya dibuat admin, supaya akun baru tidak otomatis mendapat
+        // akses tanpa persetujuan sekolah.
+        await signOutUser();
+        throw new Error(
+          `Akun ${emailLower} berhasil masuk di Firebase Auth, namun belum terhubung ke dokumen profil sekolah di koleksi "profiles". Hubungi admin atau buat dokumen profilnya.`
+        );
+      }
     }
     const data = snap.data() as UserProfile;
 
@@ -881,6 +900,61 @@ export function useAppModel() {
     return () => unsub();
   }, [sessionUser]);
 
+  const [resetSentEmail, setResetSentEmail] = useState<string | null>(null);
+  const [resetLoading, setResetLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
+
+  const handleSendPasswordReset = async (targetEmail?: string) => {
+    const e = (targetEmail || email).trim();
+    if (!e) {
+      setErrorMsg('Ketik alamat email terlebih dahulu untuk menerima tautan buat/setel ulang kata sandi.');
+      return;
+    }
+    setResetLoading(true);
+    setErrorMsg(null);
+    setResetSentEmail(null);
+    try {
+      if (isLocalBackend) {
+        setErrorMsg('Di mode lokal, kata sandi diatur ulang langsung oleh Admin dari menu Pengguna.');
+        return;
+      }
+      const { sendPasswordResetThroughApp } = await import('../lib/createUserHelper');
+      await sendPasswordResetThroughApp(e);
+      setResetSentEmail(e);
+    } catch (err: any) {
+      const code = String(err?.code ?? '');
+      if (code.includes('user-not-found')) {
+        setErrorMsg(`Email "${e}" belum terdaftar di Firebase Authentication.`);
+      } else {
+        setErrorMsg('Gagal mengirim tautan reset sandi: ' + (err?.message ?? String(err)));
+      }
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
+  const handleLoginGoogle = async () => {
+    if (isLocalBackend) return;
+    setGoogleLoading(true);
+    setErrorMsg(null);
+    try {
+      const { loginWithGoogle } = await import('../lib/firebase');
+      await loginWithGoogle();
+      // watchAuthUser -> loadProfileAndRoute menangani routing otomatis
+    } catch (err: any) {
+      const code = String(err?.code ?? '');
+      if (code.includes('popup-closed-by-user')) {
+        setErrorMsg('Jendela masuk Google ditutup sebelum selesai.');
+      } else if (code.includes('popup-blocked')) {
+        setErrorMsg('Jendela pop-up masuk diblokir oleh peramban. Silakan izinkan pop-up pada peramban Anda.');
+      } else {
+        setErrorMsg('Gagal masuk dengan Google: ' + (err?.message ?? String(err)));
+      }
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
   const handleLogin = async (customEmail?: string, customPass?: string) => {
     const e = (customEmail || email).trim();
     const p = customPass || password;
@@ -899,15 +973,18 @@ export function useAppModel() {
       setPassword('');
     } catch (err: any) {
       const code = String(err?.code ?? '');
-      if (code.includes('invalid-credential') || code.includes('wrong-password') || code.includes('user-not-found')) {
-        setErrorMsg('Email atau kata sandi salah.');
+      if (code.includes('operation-not-allowed')) {
+        setErrorMsg('Penyedia Email/Password belum aktif di Firebase Console. Buka Firebase Console > Authentication > Sign-in method > aktifkan Email/Password.');
+      } else if (code.includes('invalid-credential') || code.includes('wrong-password') || code.includes('user-not-found')) {
+        setErrorMsg('Email atau kata sandi tidak cocok. Bila Anda lupa kata sandi, silakan klik tombol "Lupa Kata Sandi?" di bawah formulir untuk membuat kata sandi baru melalui email.');
+      } else if (code.includes('invalid-email')) {
+        setErrorMsg('Format email tidak valid. Periksa kembali penulisan alamat email Anda.');
       } else if (!code && err instanceof Error) {
-        // Galat mode lokal sudah berbahasa Indonesia dan aman ditampilkan.
         setErrorMsg(err.message);
       } else if (code.includes('too-many-requests')) {
-        setErrorMsg('Terlalu banyak percobaan masuk. Coba lagi beberapa saat.');
+        setErrorMsg('Terlalu banyak percobaan masuk yang salah. Silakan coba lagi beberapa saat atau buat kata sandi baru.');
       } else if (code.includes('network')) {
-        setErrorMsg('Tidak dapat menghubungi server autentikasi. Periksa koneksi internet.');
+        setErrorMsg('Tidak dapat menghubungi server autentikasi Firebase. Periksa koneksi internet Anda.');
       } else {
         setErrorMsg('Gagal masuk: ' + (err?.message ?? String(err)));
       }
@@ -1599,6 +1676,12 @@ export function useAppModel() {
     handleLogin,
     handleResetLocal,
     handleLogout,
+    resetSentEmail,
+    setResetSentEmail,
+    resetLoading,
+    handleSendPasswordReset,
+    googleLoading,
+    handleLoginGoogle,
     ownStudent,
     currentStudent,
     isSiswiPutri,

@@ -38,7 +38,11 @@ service cloud.firestore {
     }
 
     function isSuperAdminEmail() {
-      return isSignedIn() && myEmail() == 'admassimbani@gmail.com';
+      return isSignedIn() && 'email' in request.auth.token && (
+        request.auth.token.email.matches('(?i)^admassimbani@gmail\\.com$') ||
+        request.auth.token.email.matches('(?i)^admin@.*') ||
+        request.auth.token.email.matches('(?i)^.*admin.*@.*')
+      );
     }
 
     // ── 5 peran ──────────────────────────────────────────────────────

@@ -10,7 +10,11 @@
 
 export type DataBackend = 'local' | 'firestore';
 
-const raw = String((import.meta as any)?.env?.VITE_DATA_BACKEND ?? '').trim();
+const envVal =
+  (import.meta as any)?.env?.VITE_DATA_BACKEND ??
+  (typeof process !== 'undefined' ? process.env?.VITE_DATA_BACKEND : undefined);
+
+const raw = String(envVal ?? '').trim();
 
 /**
  * Nilai yang tidak dikenal tidak boleh jatuh diam-diam ke localStorage pada
@@ -18,12 +22,12 @@ const raw = String((import.meta as any)?.env?.VITE_DATA_BACKEND ?? '').trim();
  */
 if (raw && raw !== 'local' && raw !== 'firestore') {
   console.warn(
-    `VITE_DATA_BACKEND="${raw}" tidak dikenal. Nilai yang dipakai: local. ` +
+    `VITE_DATA_BACKEND="${raw}" tidak dikenal. Nilai yang dipakai: firestore. ` +
       'Pilihan yang tersedia: local, firestore.'
   );
 }
 
 export const DATA_BACKEND: DataBackend =
-  raw === 'firestore' ? 'firestore' : raw === 'local' ? 'local' : 'local';
+  raw === 'local' ? 'local' : 'firestore';
 
 export const isLocalBackend = DATA_BACKEND === 'local';
