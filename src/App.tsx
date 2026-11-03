@@ -460,6 +460,7 @@ export default function App() {
   const [guruDeskripsi, setGuruDeskripsi] = useState('Sholat berjamaah tepat waktu 5 waktu berturut-turut di masjid');
   const [guruSuccess, setGuruSuccess] = useState(false);
   const [studentSearch, setStudentSearch] = useState('');
+  const [staffKelasFilter, setStaffKelasFilter] = useState('semua');
 
   // Daftar santri dimuat dari Firestore (collection "students"),
   // sudah terbatas rayon/anak sendiri sesuai peran.
@@ -959,6 +960,8 @@ export default function App() {
 
   // Santri milik akun yang sedang masuk (untuk role siswa / orang tua)
   const ownStudent =
+    (myStudentId ? students.find((s) => s.id === myStudentId) : null) ||
+    (students.length === 1 && role === 'siswa' ? students[0] : null) ||
     students.find((s) => s.studentEmail && s.studentEmail.toLowerCase() === accountEmail) ||
     students.find((s) => s.waliEmail && s.waliEmail.toLowerCase() === accountEmail);
 
@@ -3438,36 +3441,66 @@ export default function App() {
             {/* 4. GURU: SISWA */}
             {guruTab === 'siswa' && (
               <div className="space-y-4 max-w-5xl mx-auto">
-                <div className="flex items-center justify-between">
-                  <h1 className="text-xl font-bold text-gray-900">Direktori Santri Rayon Assimbani</h1>                      <div className="flex items-center gap-2">
-                        <input
-                          type="text"
-                          placeholder="Cari siswa / rombel..."
-                          value={studentSearch}
-                          onChange={(e) => setStudentSearch(e.target.value)}
-                          className="p-2 text-xs bg-white border border-gray-200 rounded-xl w-60 outline-none"
-                        />
-                        {canCreateStudent(role) && (
-                          <button
-                            type="button"
-                            onClick={() => setShowTambahSiswa(true)}
-                            className="px-3 py-2 bg-[#2E7D32] hover:bg-[#1B5E20] text-white text-xs font-bold rounded-xl shadow-sm flex items-center gap-1.5"
-                          >
-                            <PlusCircle className="w-3.5 h-3.5" />
-                            <span>Tambah Santri</span>
-                          </button>
-                        )}
-                      </div>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h1 className="text-xl font-bold text-gray-900">Direktori Santri Rayon Assimbani</h1>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="text"
+                      placeholder="Cari siswa / rombel / NISN..."
+                      value={studentSearch}
+                      onChange={(e) => setStudentSearch(e.target.value)}
+                      className="p-2 text-xs bg-white border border-gray-200 rounded-xl w-52 outline-none focus:border-[#2E7D32]"
+                    />
+                    <select
+                      value={staffKelasFilter}
+                      onChange={(e) => setStaffKelasFilter(e.target.value)}
+                      className="p-2 text-xs bg-white border border-gray-200 rounded-xl outline-none font-medium focus:border-[#2E7D32]"
+                    >
+                      <option value="semua">Semua Kelas ({students.length})</option>
+                      {Array.from(new Set(students.map((s) => s.kelas)))
+                        .filter(Boolean)
+                        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+                        .map((k) => (
+                          <option key={k} value={k}>
+                            {k}
+                          </option>
+                        ))}
+                    </select>
+                    {canCreateStudent(role) && (
+                      <button
+                        type="button"
+                        onClick={() => setShowTambahSiswa(true)}
+                        className="px-3 py-2 bg-[#2E7D32] hover:bg-[#1B5E20] text-white text-xs font-bold rounded-xl shadow-sm flex items-center gap-1.5"
+                      >
+                        <PlusCircle className="w-3.5 h-3.5" />
+                        <span>Tambah Santri</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
                   {students
-                    .filter((s) => s.name.toLowerCase().includes(studentSearch.toLowerCase()))
+                    .filter((s) => {
+                      const matchSearch =
+                        !studentSearch ||
+                        s.name.toLowerCase().includes(studentSearch.toLowerCase()) ||
+                        s.nisn.toLowerCase().includes(studentSearch.toLowerCase()) ||
+                        s.kelas.toLowerCase().includes(studentSearch.toLowerCase());
+                      const matchKelas =
+                        staffKelasFilter === 'semua' || s.kelas === staffKelasFilter;
+                      return matchSearch && matchKelas;
+                    })
                     .map((s) => (
                       <div key={s.id} className="bg-white p-4 rounded-2xl border border-green-100 shadow-sm flex items-center justify-between">
                         <div>
                           <span className="font-bold text-gray-900 block">{s.name}</span>
-                          <span className="text-gray-500 block">{s.kelas} • {s.rayon}</span>
+                          <span className="text-gray-500 block">
+                            <span className="px-1.5 py-0.5 rounded bg-green-50 text-green-800 font-semibold border border-green-200 mr-1.5">
+                              {s.kelas}
+                            </span>
+                            Rayon {s.rayon}
+                          </span>
                           <span className="font-bold text-[#1B5E20] block mt-1">{s.points} Poin Karakter</span>
                         </div>
                         <button
@@ -3482,6 +3515,11 @@ export default function App() {
                         </button>
                       </div>
                     ))}
+                  {students.length === 0 && (
+                    <div className="col-span-2 p-6 text-center text-gray-400 bg-white rounded-2xl border border-green-100">
+                      Belum ada data santri pada lingkup akun ini.
+                    </div>
+                  )}
                 </div>
               </div>
             )}

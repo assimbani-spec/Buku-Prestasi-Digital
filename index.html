@@ -3,6 +3,32 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      (function () {
+        try {
+          var origFetch = window.fetch;
+          var _fetch = typeof origFetch === 'function' ? origFetch.bind(window) : origFetch;
+          var descriptor = {
+            get: function () {
+              return _fetch;
+            },
+            set: function (val) {
+              _fetch = val;
+            },
+            configurable: true,
+            enumerable: true,
+          };
+          try {
+            Object.defineProperty(window, 'fetch', descriptor);
+          } catch (_) {}
+          if (typeof Window !== 'undefined' && Window.prototype) {
+            try {
+              Object.defineProperty(Window.prototype, 'fetch', descriptor);
+            } catch (_) {}
+          }
+        } catch (_) {}
+      })();
+    </script>
     <title>BKP Digital | Buku Kejar Prestasi SMK Thibbil Qulub Assimbani</title>
     <meta
       name="description"

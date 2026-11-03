@@ -44,7 +44,7 @@ const storage = new MemoryStorage();
 setStorageForTests(storage as unknown as Storage);
 (globalThis as any).localStorage = storage;
 
-const { tambahSiswa } = await import('../src/features/siswa/siswa');
+const { tambahSiswa, updateSiswa, hapusSiswa } = await import('../src/features/siswa/siswa');
 
 const ADMIN = { uid: 'u-admin', email: 'admin@lokal.test', role: 'admin' };
 const GURU = { uid: 'u-guru', email: 'guru@lokal.test', role: 'guru' };
@@ -170,6 +170,47 @@ await test('guru juga bisa menambah santri, dengan peran tercatat di audit', asy
 
   const jumlah = await semua('students');
   assert.equal(jumlah.length, 2);
+});
+
+await test('updateSiswa memperbarui kelas dan data santri beserta audit log', async () => {
+  clearLocalDatabase();
+  const santri = await tambahSiswa(santriBaru, ADMIN);
+
+  await updateSiswa(
+    santri.id,
+    {
+      ...santriBaru,
+      kelas: 'XI Rekayasa Perangkat Lunak',
+      rayon: 'Assimbani 2',
+    },
+    ADMIN
+  );
+
+  const terupdate = (await getDoc(doc(null as unknown as never, 'students', santri.id))).data();
+  assert.equal(terupdate?.kelas, 'XI Rekayasa Perangkat Lunak');
+  assert.equal(terupdate?.rayon, 'Assimbani 2');
+
+  const audit = await semua('audit_log');
+  assert.equal(audit.length, 2);
+  assert.equal(audit[1].action, 'student_update');
+  assert.equal(audit[1].actorRole, 'admin');
+  assert.equal(audit[1].after.kelas, 'XI Rekayasa Perangkat Lunak');
+});
+
+await test('hapusSiswa menghapus dokumen santri dan mencatat audit log', async () => {
+  clearLocalDatabase();
+  const santri = await tambahSiswa(santriBaru, ADMIN);
+
+  await hapusSiswa(santri.id, santri.name, ADMIN);
+
+  const terhapus = (await getDoc(doc(null as unknown as never, 'students', santri.id))).exists();
+  assert.equal(terhapus, false);
+
+  const audit = await semua('audit_log');
+  assert.equal(audit.length, 2);
+  assert.equal(audit[1].action, 'student_delete');
+  assert.equal(audit[1].actorRole, 'admin');
+  assert.equal(audit[1].before.nama, santri.name);
 });
 
 console.log('');

@@ -25,16 +25,15 @@ app.set('trust proxy', 1);
 app.use(express.json({ limit: '100kb' }));
 
 // Header keamanan dasar. CSP mengizinkan Google Fonts dan backend data resmi
-// (Firebase, Supabase), tetapi tidak mengizinkan skrip pihak ketiga.
+// (Firebase, Supabase), serta kompatibel dengan preview iframe di AI Studio.
 const CSP = [
   "default-src 'self'",
   "base-uri 'self'",
   "object-src 'none'",
-  "frame-ancestors 'self'",
   "img-src 'self' data: blob: https:",
   "font-src 'self' data: https://fonts.gstatic.com",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-  "script-src 'self'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
   "connect-src 'self' https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com https://*.firebaseapp.com https://*.supabase.co wss://*.supabase.co",
   "manifest-src 'self'",
 ].join('; ');
@@ -42,7 +41,6 @@ const CSP = [
 app.use((req: Request, res: Response, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   res.setHeader('Content-Security-Policy', CSP);
   if (req.secure) {

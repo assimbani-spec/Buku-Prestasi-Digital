@@ -40,12 +40,16 @@ import {
   UserX,
   UserCheck,
   GraduationCap,
+  Edit,
+  Search,
+  Filter,
 } from 'lucide-react';
 import { db, isLocalBackend } from '../lib/data';
-import type { UserProfile, AuditLogRecord } from '../lib/tipe';
+import type { UserProfile, AuditLogRecord, StudentRecord } from '../lib/tipe';
 import { newAuditRef, buildAuditPayload } from '../lib/audit';
 import { canManageMasterData, roleLabel, type Role } from '../lib/rbac';
 import { hashPassword, normalizeEmail, MIN_PASSWORD_LENGTH } from '../lib/localAuth';
+import { hapusSiswa } from '../features/siswa/siswa';
 import TambahSiswaModal from './TambahSiswaModal';
 
 interface AdminPanelProps {
@@ -79,6 +83,10 @@ interface SantriOption {
   kelas: string;
   rayon: string;
   points: number;
+  waliName?: string;
+  waliPhone?: string;
+  waliEmail?: string;
+  studentEmail?: string;
 }
 interface KategoriRow {
   id: string;
@@ -122,6 +130,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [passwordTarget, setPasswordTarget] = useState<string | null>(null);
   const [passwordValue, setPasswordValue] = useState('');
   const [showTambahSantri, setShowTambahSantri] = useState(false);
+  const [editingSantri, setEditingSantri] = useState<StudentRecord | null>(null);
+  const [santriKelasFilter, setSantriKelasFilter] = useState('semua');
+  const [santriSearch, setSantriSearch] = useState('');
+
+  const [confirmDelete, setConfirmDelete] = useState<{
+    type: 'master_kelas' | 'master_rayon' | 'master_kategori_poin' | 'profile' | 'student';
+    id: string;
+    label: string;
+    sublabel?: string;
+  } | null>(null);
 
   const [newKelas, setNewKelas] = useState('');
   const [newRayon, setNewRayon] = useState('');
@@ -206,6 +224,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 kelas: data.kelas ?? '-',
                 rayon: data.rayon ?? '-',
                 points: Number(data.points) || 0,
+                waliName: data.waliName ?? '',
+                waliPhone: data.waliPhone ?? '',
+                waliEmail: data.waliEmail ?? '',
+                studentEmail: data.studentEmail ?? '',
               } as SantriOption;
             })
             .sort((a, b) => a.name.localeCompare(b.name))
@@ -345,13 +367,45 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
-  const handleDelete = async (collectionName: string, id: string, label: string) => {
-    if (!window.confirm(`Hapus "${label}" dari master data?`)) return;
+  const executeConfirmedDelete = async () => {
+    if (!confirmDelete || !profile || !isAdmin) return;
+    const { type, id, label } = confirmDelete;
     setBusy(true);
     setError(null);
     try {
-      await writeWithAudit('master_delete', collectionName, id, {}, { dihapus: label });
-      setNotice(`"${label}" dihapus.`);
+      if (type === 'master_kelas') {
+        await writeWithAudit('master_delete', 'master_kelas', id, {}, { dihapus: label });
+        setNotice(`Kelas "${label}" berhasil dihapus.`);
+      } else if (type === 'master_rayon') {
+        await writeWithAudit('master_delete', 'master_rayon', id, {}, { dihapus: label });
+        setNotice(`Rayon "${label}" berhasil dihapus.`);
+      } else if (type === 'master_kategori_poin') {
+        await writeWithAudit('master_delete', 'master_kategori_poin', id, {}, { dihapus: label });
+        setNotice(`Kategori "${label}" berhasil dihapus.`);
+      } else if (type === 'profile') {
+        if (id === profile.uid) {
+          setError('Tidak bisa menghapus akun yang sedang dipakai.');
+          return;
+        }
+        const batch = writeBatch(db);
+        batch.delete(doc(db, 'profiles', id));
+        batch.set(
+          newAuditRef(),
+          buildAuditPayload({
+            actor: { uid: profile.uid, email: profile.email, role: profile.role },
+            action: 'user_delete',
+            collectionName: 'profiles',
+            docId: id,
+            before: { email: label },
+          })
+        );
+        await batch.commit();
+        setNotice(`Akun ${label} berhasil dihapus.`);
+      } else if (type === 'student') {
+        await hapusSiswa(id, label, { uid: profile.uid, email: profile.email, role: profile.role });
+        setNotice(`Santri "${label}" berhasil dihapus.`);
+      }
+      setConfirmDelete(null);
     } catch (err) {
       setError('Gagal menghapus: ' + (err instanceof Error ? err.message : String(err)));
     } finally {
@@ -545,35 +599,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
-  const handleDeleteUser = async (row: PenggunaRow) => {
+  const handleDeleteUser = (row: PenggunaRow) => {
     if (!profile || !isAdmin) return;
     if (row.id === profile.uid) {
       setError('Tidak bisa menghapus akun yang sedang dipakai.');
       return;
     }
-    if (!window.confirm(`Hapus akun ${row.email}? Santri dan riwayat poinnya tidak dihapus.`)) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const batch = writeBatch(db);
-      batch.delete(doc(db, 'profiles', row.id));
-      batch.set(
-        newAuditRef(),
-        buildAuditPayload({
-          actor: { uid: profile.uid, email: profile.email, role: profile.role },
-          action: 'user_delete',
-          collectionName: 'profiles',
-          docId: row.id,
-          before: { email: row.email, fullName: row.fullName, role: row.role },
-        })
-      );
-      await batch.commit();
-      setNotice(`Akun ${row.email} dihapus.`);
-    } catch (err) {
-      setError('Gagal menghapus akun: ' + (err instanceof Error ? err.message : String(err)));
-    } finally {
-      setBusy(false);
-    }
+    setConfirmDelete({
+      type: 'profile',
+      id: row.id,
+      label: row.email,
+      sublabel: `Akun Pengguna (${row.fullName})`,
+    });
   };
 
   const filteredLogs =
@@ -712,9 +749,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     <li key={k.id} className="py-2 flex items-center justify-between">
                       <span>{k.nama}</span>
                       <button
-                        onClick={() => handleDelete('master_kelas', k.id, k.nama)}
-                        className="text-red-500 hover:text-red-700"
-                        title="Hapus"
+                        onClick={() =>
+                          setConfirmDelete({
+                            type: 'master_kelas',
+                            id: k.id,
+                            label: k.nama,
+                            sublabel: 'Kelas / Rombel',
+                          })
+                        }
+                        className="text-red-500 hover:text-red-700 p-1 rounded-lg hover:bg-red-50"
+                        title="Hapus Kelas"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -749,9 +793,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     <li key={r.id} className="py-2 flex items-center justify-between">
                       <span>{r.nama}</span>
                       <button
-                        onClick={() => handleDelete('master_rayon', r.id, r.nama)}
-                        className="text-red-500 hover:text-red-700"
-                        title="Hapus"
+                        onClick={() =>
+                          setConfirmDelete({
+                            type: 'master_rayon',
+                            id: r.id,
+                            label: r.nama,
+                            sublabel: 'Rayon Asrama',
+                          })
+                        }
+                        className="text-red-500 hover:text-red-700 p-1 rounded-lg hover:bg-red-50"
+                        title="Hapus Rayon"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -839,9 +890,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                           <td className="p-2 font-bold">{k.poin}</td>
                           <td className="p-2 text-right">
                             <button
-                              onClick={() => handleDelete('master_kategori_poin', k.id, k.kode)}
-                              className="text-red-500 hover:text-red-700"
-                              title="Hapus"
+                              onClick={() =>
+                                setConfirmDelete({
+                                  type: 'master_kategori_poin',
+                                  id: k.id,
+                                  label: `${k.kode} (${k.deskripsi})`,
+                                  sublabel: 'Kategori Poin',
+                                })
+                              }
+                              className="text-red-500 hover:text-red-700 p-1 rounded-lg hover:bg-red-50"
+                              title="Hapus Kategori"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -864,11 +922,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
           {tab === 'santri' && (
             <section className="space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-green-100 bg-white p-4 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-green-100 bg-white p-4 shadow-sm">
                 <div>
                   <h2 className="flex items-center gap-2 text-sm font-bold">
                     <GraduationCap className="h-4 w-4 text-[#2E7D32]" aria-hidden="true" />
-                    Master santri
+                    Master Santri
                   </h2>
                   <p className="mt-1 text-xs text-gray-500">
                     {santri.length} santri terdaftar. NISN dipakai sebagai penanda unik.
@@ -876,47 +934,139 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </div>
                 <button
                   type="button"
-                  onClick={() => setShowTambahSantri(true)}
+                  onClick={() => {
+                    setEditingSantri(null);
+                    setShowTambahSantri(true);
+                  }}
                   disabled={!isAdmin}
-                  className="flex min-h-11 items-center gap-2 rounded-xl bg-[#2E7D32] px-4 text-xs font-bold text-white hover:bg-[#1B5E20] disabled:bg-gray-300"
+                  className="flex min-h-11 items-center gap-2 rounded-xl bg-[#2E7D32] px-4 text-xs font-bold text-white hover:bg-[#1B5E20] disabled:bg-gray-300 shadow-sm"
                 >
                   <UserPlus className="h-4 w-4" aria-hidden="true" />
-                  Tambah santri
+                  Tambah Santri
                 </button>
               </div>
 
               {!isAdmin && (
                 <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
-                  Hanya administrator yang dapat menambah santri.
+                  Hanya administrator yang dapat menambah atau mengubah master santri.
                 </p>
               )}
+
+              {/* Filter Kelas & Pencarian Santri */}
+              <div className="flex flex-wrap items-center gap-2 bg-white p-3 rounded-2xl border border-green-100 shadow-sm text-xs">
+                <div className="flex items-center gap-2 flex-1 min-w-[200px] bg-gray-50 px-3 py-2 rounded-xl border border-gray-200">
+                  <Search className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                  <input
+                    type="text"
+                    placeholder="Cari nama santri / NISN..."
+                    value={santriSearch}
+                    onChange={(e) => setSantriSearch(e.target.value)}
+                    className="w-full bg-transparent outline-none text-xs"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Filter className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                  <select
+                    value={santriKelasFilter}
+                    onChange={(e) => setSantriKelasFilter(e.target.value)}
+                    className="bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs outline-none font-medium"
+                  >
+                    <option value="semua">Semua Kelas ({santri.length})</option>
+                    {Array.from(new Set([...kelas.map((k) => k.nama), ...santri.map((s) => s.kelas)]))
+                      .filter(Boolean)
+                      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+                      .map((k) => (
+                        <option key={k} value={k}>
+                          {k}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              </div>
 
               <div className="overflow-x-auto rounded-2xl border border-green-100 bg-white shadow-sm">
                 <table className="w-full text-left text-xs">
                   <thead className="bg-gray-50 text-gray-500">
                     <tr>
-                      <th className="p-2.5">Nama</th>
+                      <th className="p-2.5">Nama Santri</th>
                       <th className="p-2.5">NISN</th>
                       <th className="p-2.5">Kelas</th>
                       <th className="p-2.5">Rayon</th>
                       <th className="p-2.5 text-right">Poin</th>
+                      <th className="p-2.5 text-right">Aksi</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {santri.map((row) => (
-                      <tr key={row.id}>
-                        <td className="p-2.5 font-semibold">{row.name}</td>
-                        <td className="p-2.5">{row.nisn}</td>
-                        <td className="p-2.5">{row.kelas}</td>
-                        <td className="p-2.5">{row.rayon}</td>
-                        <td className="p-2.5 text-right font-semibold text-green-900">
-                          {row.points}
-                        </td>
-                      </tr>
-                    ))}
+                    {santri
+                      .filter((row) => {
+                        const matchSearch =
+                          !santriSearch ||
+                          row.name.toLowerCase().includes(santriSearch.toLowerCase()) ||
+                          row.nisn.toLowerCase().includes(santriSearch.toLowerCase());
+                        const matchKelas =
+                          santriKelasFilter === 'semua' || row.kelas === santriKelasFilter;
+                        return matchSearch && matchKelas;
+                      })
+                      .map((row) => (
+                        <tr key={row.id} className="hover:bg-gray-50/80">
+                          <td className="p-2.5 font-semibold text-gray-900">{row.name}</td>
+                          <td className="p-2.5 text-gray-600 font-mono">{row.nisn}</td>
+                          <td className="p-2.5">
+                            <span className="px-2 py-0.5 rounded-md bg-green-50 text-green-800 font-semibold border border-green-200">
+                              {row.kelas}
+                            </span>
+                          </td>
+                          <td className="p-2.5 text-gray-600">{row.rayon}</td>
+                          <td className="p-2.5 text-right font-bold text-green-900">
+                            {row.points}
+                          </td>
+                          <td className="p-2.5 text-right">
+                            <div className="flex items-center justify-end gap-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingSantri({
+                                    id: row.id,
+                                    name: row.name,
+                                    nisn: row.nisn,
+                                    kelas: row.kelas,
+                                    rayon: row.rayon,
+                                    points: row.points,
+                                    waliName: row.waliName,
+                                    waliPhone: row.waliPhone,
+                                    waliEmail: row.waliEmail,
+                                    studentEmail: row.studentEmail,
+                                  });
+                                  setShowTambahSantri(true);
+                                }}
+                                className="p-1.5 rounded-lg text-emerald-700 hover:bg-emerald-50"
+                                title="Ubah Data Santri"
+                              >
+                                <Edit className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setConfirmDelete({
+                                    type: 'student',
+                                    id: row.id,
+                                    label: row.name,
+                                    sublabel: `NISN: ${row.nisn} · Kelas: ${row.kelas}`,
+                                  })
+                                }
+                                className="p-1.5 rounded-lg text-red-500 hover:bg-red-50 hover:text-red-700"
+                                title="Hapus Santri"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
                     {santri.length === 0 && (
                       <tr>
-                        <td colSpan={5} className="p-3 text-gray-400">
+                        <td colSpan={6} className="p-3 text-gray-400">
                           Belum ada santri. Tambahkan santri pertama lewat tombol di atas.
                         </td>
                       </tr>
@@ -927,10 +1077,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
               <TambahSiswaModal
                 isOpen={showTambahSantri}
-                onClose={() => setShowTambahSantri(false)}
-                onStudentAdded={() => {
-                  setNotice('Santri baru tersimpan.');
+                editingStudent={editingSantri}
+                onClose={() => {
                   setShowTambahSantri(false);
+                  setEditingSantri(null);
+                }}
+                onStudentAdded={() => {
+                  setNotice(
+                    editingSantri
+                      ? `Data santri "${editingSantri.name}" berhasil diperbarui.`
+                      : 'Santri baru berhasil ditambahkan.'
+                  );
+                  setShowTambahSantri(false);
+                  setEditingSantri(null);
                 }}
                 actorRole={profile?.role}
                 actor={profile ? { uid: profile.uid, email: profile.email ?? null } : null}
@@ -1317,6 +1476,53 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           )}
         </div>
       </main>
+
+      {/* Modal Konfirmasi Hapus */}
+      {confirmDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-5 shadow-2xl border border-red-100 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center shrink-0 text-red-600">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-sm text-gray-900">Konfirmasi Hapus</h3>
+                <span className="text-xs text-gray-500">{confirmDelete.sublabel || 'Master Data'}</span>
+              </div>
+            </div>
+
+            <p className="text-xs text-gray-600 leading-relaxed">
+              Apakah Anda yakin ingin menghapus{' '}
+              <strong className="text-gray-900">"{confirmDelete.label}"</strong>? Tindakan ini
+              akan dicatat ke dalam audit log dan tidak dapat dibatalkan.
+            </p>
+
+            <div className="flex gap-2 justify-end pt-2 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(null)}
+                disabled={busy}
+                className="px-4 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-100 rounded-xl transition-colors"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={executeConfirmedDelete}
+                disabled={busy}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-xl shadow-sm flex items-center gap-1.5 transition-colors disabled:bg-gray-300"
+              >
+                {busy ? (
+                  <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                ) : (
+                  <Trash2 className="w-3.5 h-3.5" />
+                )}
+                <span>{busy ? 'Menghapus...' : 'Ya, Hapus'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

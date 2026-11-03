@@ -3,10 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
-import { UserPlus, X, Save, AlertCircle, CheckCircle2, School, User, Phone, Mail, Award, MapPin } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { UserPlus, X, Save, AlertCircle, CheckCircle2, User, Phone, Mail, Award, Edit } from 'lucide-react';
 import type { StudentRecord } from '../lib/tipe';
-import { tambahSiswa } from '../features/siswa/siswa';
+import { tambahSiswa, updateSiswa } from '../features/siswa/siswa';
+import { collection, db, onSnapshot } from '../lib/data';
 
 interface TambahSiswaModalProps {
   isOpen: boolean;
@@ -16,9 +17,11 @@ interface TambahSiswaModalProps {
   actorRole?: string;
   /** Akun pelaku (uid, email) untuk audit log. */
   actor?: { uid: string; email: string | null } | null;
+  /** Santri yang sedang diedit (bila mode ubah data). */
+  editingStudent?: StudentRecord | null;
 }
 
-const DAFTAR_KELAS = [
+const DEFAULT_KELAS = [
   'X TKJ 1',
   'X TKJ 2',
   'X Farmasi A',
@@ -33,7 +36,7 @@ const DAFTAR_KELAS = [
   'XII Keperawatan Medikal',
 ];
 
-const DAFTAR_RAYON = [
+const DEFAULT_RAYON = [
   'Simbang 2',
   'Assimbani 1',
   'Assimbani 2',
@@ -50,11 +53,15 @@ export const TambahSiswaModal: React.FC<TambahSiswaModalProps> = ({
   onStudentAdded,
   actorRole,
   actor,
+  editingStudent,
 }) => {
+  const [daftarKelas, setDaftarKelas] = useState<string[]>(DEFAULT_KELAS);
+  const [daftarRayon, setDaftarRayon] = useState<string[]>(DEFAULT_RAYON);
+
   const [name, setName] = useState('');
   const [nisn, setNisn] = useState('');
-  const [kelas, setKelas] = useState(DAFTAR_KELAS[2]); // X Farmasi A
-  const [rayon, setRayon] = useState(DAFTAR_RAYON[1]); // Assimbani 1
+  const [kelas, setKelas] = useState(DEFAULT_KELAS[2]);
+  const [rayon, setRayon] = useState(DEFAULT_RAYON[1]);
   const [waliName, setWaliName] = useState('');
   const [waliPhone, setWaliPhone] = useState('');
   const [waliEmail, setWaliEmail] = useState('');
@@ -64,6 +71,54 @@ export const TambahSiswaModal: React.FC<TambahSiswaModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState(false);
+
+  // Muat daftar kelas dan rayon dari master data secara real-time
+  useEffect(() => {
+    const unsubs = [
+      onSnapshot(collection(db, 'master_kelas'), (snap) => {
+        const dbKelas = snap.docs.map((d) => ((d.data() as any).nama || d.id).trim()).filter(Boolean);
+        const combined = Array.from(new Set([...DEFAULT_KELAS, ...dbKelas])).sort((a, b) =>
+          a.localeCompare(b, undefined, { numeric: true })
+        );
+        setDaftarKelas(combined);
+      }),
+      onSnapshot(collection(db, 'master_rayon'), (snap) => {
+        const dbRayon = snap.docs.map((d) => ((d.data() as any).nama || d.id).trim()).filter(Boolean);
+        const combined = Array.from(new Set([...DEFAULT_RAYON, ...dbRayon])).sort((a, b) =>
+          a.localeCompare(b, undefined, { numeric: true })
+        );
+        setDaftarRayon(combined);
+      }),
+    ];
+    return () => unsubs.forEach((u) => u());
+  }, []);
+
+  // Isi form jika sedang dalam mode edit
+  useEffect(() => {
+    if (editingStudent) {
+      setName(editingStudent.name || '');
+      setNisn(editingStudent.nisn || '');
+      setKelas(editingStudent.kelas || (daftarKelas[0] ?? ''));
+      setRayon(editingStudent.rayon || (daftarRayon[0] ?? ''));
+      setWaliName(editingStudent.waliName || '');
+      setWaliPhone(editingStudent.waliPhone || '');
+      setWaliEmail(editingStudent.waliEmail || '');
+      setStudentEmail(editingStudent.studentEmail || '');
+      setInitialPoints(editingStudent.points ?? 1000);
+    } else {
+      setName('');
+      setNisn('');
+      setKelas(daftarKelas[0] ?? DEFAULT_KELAS[0]);
+      setRayon(daftarRayon[0] ?? DEFAULT_RAYON[0]);
+      setWaliName('');
+      setWaliPhone('');
+      setWaliEmail('');
+      setStudentEmail('');
+      setInitialPoints(1000);
+    }
+    setErrorMsg(null);
+    setSuccessMsg(false);
+  }, [editingStudent, isOpen]);
 
   if (!isOpen) return null;
 
@@ -86,35 +141,58 @@ export const TambahSiswaModal: React.FC<TambahSiswaModalProps> = ({
     setErrorMsg(null);
 
     try {
-      const student = await tambahSiswa(
-        {
+      if (editingStudent) {
+        await updateSiswa(
+          editingStudent.id,
+          {
+            name,
+            nisn,
+            kelas,
+            rayon,
+            points: initialPoints,
+            waliName,
+            waliPhone,
+            waliEmail,
+            studentEmail,
+          },
+          { uid: actor.uid, email: actor.email, role: actorRole }
+        );
+        setSuccessMsg(true);
+        onStudentAdded({
+          ...editingStudent,
           name,
           nisn,
           kelas,
           rayon,
           points: initialPoints,
-          waliName,
-          waliPhone,
-          waliEmail,
-          studentEmail,
-        },
-        { uid: actor.uid, email: actor.email, role: actorRole }
-      );
-
-      setSuccessMsg(true);
-      onStudentAdded(student);
+          waliName: waliName || undefined,
+          waliPhone: waliPhone || undefined,
+          waliEmail: waliEmail || undefined,
+          studentEmail: studentEmail || undefined,
+        });
+      } else {
+        const student = await tambahSiswa(
+          {
+            name,
+            nisn,
+            kelas,
+            rayon,
+            points: initialPoints,
+            waliName,
+            waliPhone,
+            waliEmail,
+            studentEmail,
+          },
+          { uid: actor.uid, email: actor.email, role: actorRole }
+        );
+        setSuccessMsg(true);
+        onStudentAdded(student);
+      }
 
       setTimeout(() => {
         setSuccessMsg(false);
         onClose();
-        setName('');
-        setNisn('');
-        setWaliName('');
-        setWaliPhone('');
-        setWaliEmail('');
-        setStudentEmail('');
-        setInitialPoints(1000);
-      }, 1500);
+      }, 1200);
     } catch (err) {
       setErrorMsg(
         'Gagal menyimpan data ke database: ' + (err instanceof Error ? err.message : String(err))
@@ -132,11 +210,21 @@ export const TambahSiswaModal: React.FC<TambahSiswaModalProps> = ({
         <div className="bg-[#1B5E20] text-white px-5 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="p-2 bg-green-800 rounded-xl">
-              <UserPlus className="w-5 h-5 text-green-200" />
+              {editingStudent ? (
+                <Edit className="w-5 h-5 text-green-200" />
+              ) : (
+                <UserPlus className="w-5 h-5 text-green-200" />
+              )}
             </div>
             <div>
-              <h2 className="text-base font-bold">Input Data Santri Baru</h2>
-              <p className="text-xs text-green-200">Tambahkan master santri ke Buku Kejar Prestasi (BKP)</p>
+              <h2 className="text-base font-bold">
+                {editingStudent ? 'Ubah Data Santri' : 'Input Data Santri Baru'}
+              </h2>
+              <p className="text-xs text-green-200">
+                {editingStudent
+                  ? `Mengubah rincian kelas/rayon santri: ${editingStudent.name}`
+                  : 'Tambahkan master santri ke Buku Kejar Prestasi (BKP)'}
+              </p>
             </div>
           </div>
           <button
@@ -223,7 +311,7 @@ export const TambahSiswaModal: React.FC<TambahSiswaModalProps> = ({
                   onChange={(e) => setKelas(e.target.value)}
                   className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:border-[#2E7D32] outline-none font-medium"
                 >
-                  {DAFTAR_KELAS.map((k) => (
+                  {daftarKelas.map((k) => (
                     <option key={k} value={k}>
                       {k}
                     </option>
@@ -238,7 +326,7 @@ export const TambahSiswaModal: React.FC<TambahSiswaModalProps> = ({
                   onChange={(e) => setRayon(e.target.value)}
                   className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:border-[#2E7D32] outline-none font-medium"
                 >
-                  {DAFTAR_RAYON.map((r) => (
+                  {daftarRayon.map((r) => (
                     <option key={r} value={r}>
                       {r}
                     </option>
@@ -332,7 +420,7 @@ export const TambahSiswaModal: React.FC<TambahSiswaModalProps> = ({
               ) : (
                 <>
                   <Save className="w-4 h-4" />
-                  <span>Simpan Data Santri</span>
+                  <span>{editingStudent ? 'Simpan Perubahan' : 'Simpan Data Santri'}</span>
                 </>
               )}
             </button>
