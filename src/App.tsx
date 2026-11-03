@@ -55,6 +55,8 @@ import { ajukanPrestasi, putuskanPrestasi } from './features/prestasi/prestasi';
 // supaya siswa dan guru tidak mengunduh kode yang tidak mereka pakai.
 const AdminPanel = lazy(() => import('./components/AdminPanel'));
 const LaporanBulananOrtu = lazy(() => import('./components/LaporanBulananOrtu'));
+import KalenderMenstruasi from './components/KalenderMenstruasi';
+import JadwalPelajaranView from './components/JadwalPelajaranView';
 import { 
   BookOpen, 
   Lock, 
@@ -107,6 +109,7 @@ type StudentRow = {
   nisn: string;
   kelas: string;
   rayon: string;
+  gender?: 'L' | 'P';
   points: number;
   studentEmail?: string;
   waliEmail?: string;
@@ -171,15 +174,19 @@ export default function App() {
   // Tab State for Mobile Roles
   const [siswaTab, setSiswaTab] = useState<NavTab>('jurnal');
   const [ortuTab, setOrtuTab] = useState<NavTab>('home');
-  const [guruTab, setGuruTab] = useState<'dashboard' | 'input_poin' | 'verifikasi' | 'kesehatan' | 'siswa'>('dashboard');
+  const [guruTab, setGuruTab] = useState<'dashboard' | 'input_poin' | 'verifikasi' | 'jadwal' | 'kesehatan' | 'siswa'>('dashboard');
 
   // Siswa State
   const [siswaDate, setSiswaDate] = useState(new Date().toISOString().split('T')[0]);
   const [siswaSaveSuccess, setSiswaSaveSuccess] = useState(false);
   const [jurnalSaving, setJurnalSaving] = useState(false);
   const jurnalSavingRef = useRef(false);
-  const [jurnalView, setJurnalView] = useState<'harian' | 'mingguan' | 'non_rutin' | 'kesehatan'>('harian');
+  const [jurnalView, setJurnalView] = useState<'harian' | 'mingguan' | 'non_rutin' | 'jadwal' | 'kesehatan'>('harian');
   const [poinTabFilter, setPoinTabFilter] = useState<'semua' | 'prestasi' | 'apresiasi' | 'konsekuensi'>('semua');
+  const [tahunPelajaranFilter, setTahunPelajaranFilter] = useState<string>('Semua');
+  const [guruTahunFilter, setGuruTahunFilter] = useState<string>('Semua');
+  const [guruStatusFilter, setGuruStatusFilter] = useState<string>('Semua');
+  const [selectedClassForJadwal, setSelectedClassForJadwal] = useState<string>('X TKJ 1');
   
   // Pembiasaan Harian Lengkap Sesuai Dokumen Resmi BKP Hal 15-16 & 59
   const [jurnal, setJurnal] = useState({
@@ -432,6 +439,8 @@ export default function App() {
     tingkat: 'Sekolah',
     capaian: '',
     tanggal: new Date().toISOString().split('T')[0],
+    tahunPelajaran: '2025/2026',
+    semester: 'Genap' as 'Ganjil' | 'Genap',
     deskripsi: '',
   });
   const [prestasiSubmitting, setPrestasiSubmitting] = useState(false);
@@ -627,16 +636,26 @@ export default function App() {
   // memakai filter yang sejalan dengan rules (kalau tidak, Firestore
   // menolak permintaan dengan "Missing or insufficient permissions").
   // ═══════════════════════════════════════════════════════════════
-  const mapStudentDoc = (id: string, data: any): StudentRow => ({
-    id,
-    name: data.name ?? '(tanpa nama)',
-    nisn: data.nisn ?? '',
-    kelas: data.kelas ?? '-',
-    rayon: data.rayon ?? '-',
-    points: Number(data.points) || 0,
-    studentEmail: data.studentEmail ?? data.email ?? '',
-    waliEmail: data.waliEmail ?? '',
-  });
+  const mapStudentDoc = (id: string, data: any): StudentRow => {
+    const isPerempuanByRayonOrName =
+      (data.rayon ?? '').toLowerCase().includes('khadijah') ||
+      (data.rayon ?? '').toLowerCase().includes('aisyah') ||
+      (data.name ?? '').toLowerCase().includes('aisyah') ||
+      (data.name ?? '').toLowerCase().includes('zahra') ||
+      (data.name ?? '').toLowerCase().includes('fatimah') ||
+      (data.name ?? '').toLowerCase().includes('nurul');
+    return {
+      id,
+      name: data.name ?? '(tanpa nama)',
+      nisn: data.nisn ?? '',
+      kelas: data.kelas ?? '-',
+      rayon: data.rayon ?? '-',
+      gender: data.gender ?? (isPerempuanByRayonOrName ? 'P' : 'L'),
+      points: Number(data.points) || 0,
+      studentEmail: data.studentEmail ?? data.email ?? '',
+      waliEmail: data.waliEmail ?? '',
+    };
+  };
 
   // Daftar santri real-time (terbatas peran)
   useEffect(() => {
@@ -821,6 +840,10 @@ export default function App() {
             tingkat: data.tingkat ?? '',
             capaian: data.capaian ?? '',
             tanggal: data.tanggal ?? '',
+            tahunPelajaran: data.tahunPelajaran ?? '2025/2026',
+            semester: data.semester ?? 'Genap',
+            nama_siswa: data.nama_siswa ?? '',
+            kelas: data.kelas ?? '',
             deskripsi: data.deskripsi ?? '',
             status: data.status ?? 'pending',
             poin: Number(data.poin) || 0,
@@ -976,8 +999,33 @@ export default function App() {
           nisn: profile?.nisn || '-',
           kelas: profile?.kelas || '-',
           rayon: myRayonId || '-',
+          gender: profile?.gender || 'L',
           points: profile?.total_poin ?? 0,
         };
+
+  // Indikator apakah santri aktif adalah siswi putri (untuk kalender menstruasi)
+  const isSiswiPutri =
+    currentStudent?.gender === 'P' ||
+    (currentStudent?.rayon ?? '').toLowerCase().includes('khadijah') ||
+    (currentStudent?.rayon ?? '').toLowerCase().includes('aisyah') ||
+    (currentStudent?.name ?? '').toLowerCase().includes('aisyah') ||
+    (currentStudent?.name ?? '').toLowerCase().includes('zahra') ||
+    (currentStudent?.name ?? '').toLowerCase().includes('fatimah') ||
+    (currentStudent?.name ?? '').toLowerCase().includes('nurul');
+
+  const daftarKelasSemua = Array.from(
+    new Set([
+      'X TKJ 1',
+      'X TKJ 2',
+      'X Farmasi A',
+      'X Farmasi B',
+      'X Keperawatan A',
+      'X Keperawatan B',
+      'XI Farmasi A',
+      'XI Keperawatan A',
+      ...students.map((s) => s.kelas),
+    ])
+  ).filter(Boolean);
 
   // Muat isian non-rutin yang sudah tersimpan pada pekan ini (bila ada).
   useEffect(() => {
@@ -1420,6 +1468,10 @@ export default function App() {
           tingkat: prestasiForm.tingkat,
           capaian: prestasiForm.capaian,
           tanggal: prestasiForm.tanggal,
+          tahunPelajaran: prestasiForm.tahunPelajaran,
+          semester: prestasiForm.semester,
+          namaSiswa: currentStudent.name,
+          kelas: currentStudent.kelas,
           deskripsi: prestasiForm.deskripsi,
         },
         auditActor
@@ -1688,11 +1740,11 @@ export default function App() {
               {siswaTab === 'jurnal' && (
                 <div className="space-y-4">
                   {/* Multi-Sub Tab Navigator */}
-                  <div className="bg-white p-1 rounded-2xl shadow-sm border border-green-100 grid grid-cols-4 gap-1 text-xs">
+                  <div className="bg-white p-1 rounded-2xl shadow-sm border border-green-100 flex items-center gap-1 overflow-x-auto text-xs">
                     <button
                       type="button"
                       onClick={() => setJurnalView('harian')}
-                      className={`py-2 px-1 text-center font-bold rounded-xl transition-all ${
+                      className={`flex-1 min-w-[75px] py-2 px-1 text-center font-bold rounded-xl transition-all ${
                         jurnalView === 'harian'
                           ? 'bg-[#2E7D32] text-white shadow-sm'
                           : 'text-gray-500 hover:text-green-800'
@@ -1703,7 +1755,7 @@ export default function App() {
                     <button
                       type="button"
                       onClick={() => setJurnalView('mingguan')}
-                      className={`py-2 px-1 text-center font-bold rounded-xl transition-all ${
+                      className={`flex-1 min-w-[75px] py-2 px-1 text-center font-bold rounded-xl transition-all ${
                         jurnalView === 'mingguan'
                           ? 'bg-[#2E7D32] text-white shadow-sm'
                           : 'text-gray-500 hover:text-green-800'
@@ -1714,7 +1766,7 @@ export default function App() {
                     <button
                       type="button"
                       onClick={() => setJurnalView('non_rutin')}
-                      className={`py-2 px-1 text-center font-bold rounded-xl transition-all ${
+                      className={`flex-1 min-w-[85px] py-2 px-1 text-center font-bold rounded-xl transition-all ${
                         jurnalView === 'non_rutin'
                           ? 'bg-[#2E7D32] text-white shadow-sm'
                           : 'text-gray-500 hover:text-green-800'
@@ -1724,15 +1776,36 @@ export default function App() {
                     </button>
                     <button
                       type="button"
+                      onClick={() => setJurnalView('jadwal')}
+                      className={`flex-1 min-w-[85px] py-2 px-1 text-center font-bold rounded-xl transition-all flex items-center justify-center gap-1 ${
+                        jurnalView === 'jadwal'
+                          ? 'bg-[#2E7D32] text-white shadow-sm'
+                          : 'text-gray-500 hover:text-green-800'
+                      }`}
+                    >
+                      <Calendar className="w-3.5 h-3.5" />
+                      <span>Jadwal</span>
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => setJurnalView('kesehatan')}
-                      className={`py-2 px-1 text-center font-bold rounded-xl transition-all flex items-center justify-center gap-1 ${
+                      className={`flex-1 min-w-[95px] py-2 px-1 text-center font-bold rounded-xl transition-all flex items-center justify-center gap-1 ${
                         jurnalView === 'kesehatan'
                           ? 'bg-[#2E7D32] text-white shadow-sm'
                           : 'text-gray-500 hover:text-green-800'
                       }`}
                     >
-                      <HeartPulse className="w-3 h-3" />
-                      Kesehatan
+                      {isSiswiPutri ? (
+                        <>
+                          <Droplets className="w-3.5 h-3.5 text-rose-300" />
+                          <span>Haid & Sehat</span>
+                        </>
+                      ) : (
+                        <>
+                          <HeartPulse className="w-3.5 h-3.5" />
+                          <span>Kesehatan</span>
+                        </>
+                      )}
                     </button>
                   </div>
 
@@ -1766,40 +1839,51 @@ export default function App() {
                         </div>
                       </div>
 
-                      {/* Dispensasi Menstruasi Bar */}
-                      <div className="bg-pink-50 border border-pink-200 rounded-2xl p-3 flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="w-2.5 h-2.5 rounded-full bg-pink-500" />
-                          <div>
-                            <span className="text-xs font-bold text-pink-900 block">Dispensasi Syar'i (Menstruasi)</span>
-                            <span className="text-xs text-pink-700">Untuk siswi yang sedang berhalangan haid</span>
+                      {/* Dispensasi Menstruasi Bar - Khusus Siswi Putri */}
+                      {isSiswiPutri && (
+                        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse" />
+                            <div>
+                              <span className="text-xs font-bold text-rose-950 block">Dispensasi Syar'i (Menstruasi)</span>
+                              <span className="text-[11px] text-rose-700">Untuk siswi yang sedang berhalangan haid</span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setJurnalView('kesehatan')}
+                              className="text-xs font-semibold text-rose-800 hover:text-rose-950 underline px-2 py-1"
+                            >
+                              Buka Kalender &rarr;
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const next = !jurnal.sedang_menstruasi;
+                                setJurnal({
+                                  ...jurnal,
+                                  sedang_menstruasi: next,
+                                  tahajud: next ? 'menstruasi' : '4_rakaat',
+                                  dhuha: next ? 'menstruasi' : '4_rakaat',
+                                  subuh: next ? 'menstruasi' : 'berjamaah',
+                                  dzuhur: next ? 'menstruasi' : 'berjamaah',
+                                  ashar: next ? 'menstruasi' : 'berjamaah',
+                                  maghrib: next ? 'menstruasi' : 'berjamaah',
+                                  isya: next ? 'menstruasi' : 'berjamaah',
+                                });
+                              }}
+                              className={`text-xs px-3 py-1.5 rounded-xl font-bold transition-all shadow-2xs ${
+                                jurnal.sedang_menstruasi
+                                  ? 'bg-rose-600 text-white shadow-xs'
+                                  : 'bg-white text-rose-700 border border-rose-300 hover:bg-rose-100'
+                              }`}
+                            >
+                              {jurnal.sedang_menstruasi ? 'Sedang Haid (Udzur)' : 'Status: Suci'}
+                            </button>
                           </div>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const next = !jurnal.sedang_menstruasi;
-                            setJurnal({
-                              ...jurnal,
-                              sedang_menstruasi: next,
-                              tahajud: next ? 'menstruasi' : '4_rakaat',
-                              dhuha: next ? 'menstruasi' : '4_rakaat',
-                              subuh: next ? 'menstruasi' : 'berjamaah',
-                              dzuhur: next ? 'menstruasi' : 'berjamaah',
-                              ashar: next ? 'menstruasi' : 'berjamaah',
-                              maghrib: next ? 'menstruasi' : 'berjamaah',
-                              isya: next ? 'menstruasi' : 'berjamaah',
-                            });
-                          }}
-                          className={`text-xs px-3 py-1 rounded-xl font-bold transition-all ${
-                            jurnal.sedang_menstruasi
-                              ? 'bg-pink-600 text-white shadow-sm'
-                              : 'bg-white text-pink-700 border border-pink-300'
-                          }`}
-                        >
-                          {jurnal.sedang_menstruasi ? 'Sedang Haid (M)' : 'Tidak Haid'}
-                        </button>
-                      </div>
+                      )}
 
                       {/* 1. SHOLAT TAHAJUD & SHOLAT DHUHA (Sesuai Hal 15 Dokumen BKP) */}
                       <div className="bg-white rounded-2xl p-4 shadow-sm border border-green-100 space-y-3">
@@ -2292,15 +2376,95 @@ export default function App() {
                     </div>
                   )}
 
-                  {/* SUB-VIEW 4: BORANG KESEHATAN TERPADU */}
+                  {/* SUB-VIEW 4: JADWAL PELAJARAN (SENIN - JUMAT) */}
+                  {jurnalView === 'jadwal' && (
+                    <JadwalPelajaranView
+                      currentClass={currentStudent.kelas}
+                      userRole={role}
+                      user={sessionUser}
+                    />
+                  )}
+
+                  {/* SUB-VIEW 5: KALENDER MENSTRUASI / KESEHATAN */}
                   {jurnalView === 'kesehatan' && (
-                    <ModulBelumTersedia judul="Borang kesehatan siswa" />
+                    isSiswiPutri ? (
+                      <KalenderMenstruasi
+                        student={currentStudent}
+                        user={sessionUser}
+                        onStatusChange={(isHaid) => {
+                          setJurnal((prev) => ({
+                            ...prev,
+                            sedang_menstruasi: isHaid,
+                            subuh: isHaid ? 'menstruasi' : (prev.subuh === 'menstruasi' ? 'berjamaah' : prev.subuh),
+                            dzuhur: isHaid ? 'menstruasi' : (prev.dzuhur === 'menstruasi' ? 'berjamaah' : prev.dzuhur),
+                            ashar: isHaid ? 'menstruasi' : (prev.ashar === 'menstruasi' ? 'berjamaah' : prev.ashar),
+                            maghrib: isHaid ? 'menstruasi' : (prev.maghrib === 'menstruasi' ? 'berjamaah' : prev.maghrib),
+                            isya: isHaid ? 'menstruasi' : (prev.isya === 'menstruasi' ? 'berjamaah' : prev.isya),
+                            tahajud: isHaid ? 'menstruasi' : (prev.tahajud === 'menstruasi' ? '4_rakaat' : prev.tahajud),
+                            dhuha: isHaid ? 'menstruasi' : (prev.dhuha === 'menstruasi' ? '4_rakaat' : prev.dhuha),
+                          }));
+                        }}
+                      />
+                    ) : (
+                      <div className="bg-white rounded-2xl p-5 shadow-sm border border-emerald-100 space-y-3 text-xs">
+                        <div className="flex items-center gap-2 text-emerald-800 font-bold">
+                          <HeartPulse className="w-5 h-5 text-emerald-600" />
+                          <h3 className="text-sm">Borang Kebugaran & Kesehatan Santri Putra</h3>
+                        </div>
+                        <p className="text-gray-600 leading-relaxed">
+                          Pemantauan kebiasaan fisik harian: pola tidur sehat (sebelum 22.00), bangun sebelum subuh, minum air putih 1,5 - 2 liter, dan olahraga rutin di asrama.
+                        </p>
+                        <div className="grid grid-cols-2 gap-2 pt-2">
+                          <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200">
+                            <span className="font-bold text-emerald-900 block">Minum Air Putih</span>
+                            <span className="text-gray-600">8 Gelas (2 Liter) / Hari</span>
+                          </div>
+                          <div className="p-3 bg-blue-50 rounded-xl border border-blue-200">
+                            <span className="font-bold text-blue-900 block">Olahraga Pekanan</span>
+                            <span className="text-gray-600">Minimal 15 menit / pekan</span>
+                          </div>
+                        </div>
+                      </div>
+                    )
                   )}
                 </div>
               )}
 
               {/* TAB SISWA: BORANG KESEHATAN (DARI BOTTOM NAV) */}
-              {siswaTab === 'kesehatan' && <ModulBelumTersedia judul="Borang kesehatan siswa" />}
+              {siswaTab === 'kesehatan' && (
+                isSiswiPutri ? (
+                  <KalenderMenstruasi
+                    student={currentStudent}
+                    user={sessionUser}
+                    onStatusChange={(isHaid) => {
+                      setJurnal((prev) => ({
+                        ...prev,
+                        sedang_menstruasi: isHaid,
+                      }));
+                    }}
+                  />
+                ) : (
+                  <div className="bg-white rounded-2xl p-5 shadow-sm border border-emerald-100 space-y-3 text-xs">
+                    <div className="flex items-center gap-2 text-emerald-800 font-bold">
+                      <HeartPulse className="w-5 h-5 text-emerald-600" />
+                      <h3 className="text-sm">Borang Kebugaran & Kesehatan Santri Putra</h3>
+                    </div>
+                    <p className="text-gray-600 leading-relaxed">
+                      Pemantauan kebiasaan fisik harian: pola tidur sehat (sebelum 22.00), bangun sebelum subuh, minum air putih 1,5 - 2 liter, dan olahraga rutin di asrama.
+                    </p>
+                    <div className="grid grid-cols-2 gap-2 pt-2">
+                      <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200">
+                        <span className="font-bold text-emerald-900 block">Minum Air Putih</span>
+                        <span className="text-gray-600">8 Gelas (2 Liter) / Hari</span>
+                      </div>
+                      <div className="p-3 bg-blue-50 rounded-xl border border-blue-200">
+                        <span className="font-bold text-blue-900 block">Olahraga Pekanan</span>
+                        <span className="text-gray-600">Minimal 15 menit / pekan</span>
+                      </div>
+                    </div>
+                  </div>
+                )
+              )}
 
               {/* TAB SISWA: HOME */}
               {siswaTab === 'home' && (
@@ -2362,8 +2526,49 @@ export default function App() {
                         Belum ada prestasi tercatat. Ajukan dari tab Poin.
                       </div>
                     )}
-                  </div>
+                    {/* Kartu Jadwal Pelajaran */}
+                    <div className="bg-white rounded-2xl p-4 shadow-sm border border-green-100 flex items-center justify-between">
+                      <div>
+                        <h3 className="text-xs font-bold text-gray-700 uppercase flex items-center gap-1.5">
+                          <Calendar className="w-4 h-4 text-emerald-600" />
+                          <span>Jadwal Pelajaran ({currentStudent.kelas})</span>
+                        </h3>
+                        <p className="text-xs text-gray-500 mt-0.5">Senin s.d. Jumat sesuai kurikulum sekolah</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setSiswaTab('jurnal');
+                          setJurnalView('jadwal');
+                        }}
+                        className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-[#1B5E20] font-bold rounded-xl border border-emerald-200 text-xs transition-colors"
+                      >
+                        Buka Jadwal &rarr;
+                      </button>
+                    </div>
 
+                    {/* Kartu Khusus Siswi Putri: Kalender Menstruasi */}
+                    {isSiswiPutri && (
+                      <div className="bg-linear-to-r from-rose-50 to-pink-50 rounded-2xl p-4 border border-rose-200 shadow-xs flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                            <h4 className="text-xs font-bold text-rose-900">Kalender Menstruasi & Udzur Syar'i</h4>
+                          </div>
+                          <p className="text-xs text-rose-700">
+                            Catat siklus bulanan, konsumsi tablet tambah darah (TTD), & dispensasi sholat.
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => {
+                            setSiswaTab('kesehatan');
+                          }}
+                          className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl text-xs shrink-0 shadow-xs transition-colors"
+                        >
+                          Buka Siklus
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -2486,6 +2691,31 @@ export default function App() {
                               />
                             </div>
                           </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="block font-semibold text-gray-700 mb-1">Tahun Pelajaran *</label>
+                              <select
+                                value={prestasiForm.tahunPelajaran}
+                                onChange={(e) => setPrestasiForm({ ...prestasiForm, tahunPelajaran: e.target.value })}
+                                className="w-full px-2 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none font-bold text-green-900"
+                              >
+                                {['2023/2024', '2024/2025', '2025/2026', '2026/2027'].map((tp) => (
+                                  <option key={tp} value={tp}>{tp}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block font-semibold text-gray-700 mb-1">Semester</label>
+                              <select
+                                value={prestasiForm.semester}
+                                onChange={(e) => setPrestasiForm({ ...prestasiForm, semester: e.target.value as any })}
+                                className="w-full px-2 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none"
+                              >
+                                <option value="Ganjil">Semester Ganjil</option>
+                                <option value="Genap">Semester Genap</option>
+                              </select>
+                            </div>
+                          </div>
                           <div>
                             <label className="block font-semibold text-gray-700 mb-1">Keterangan</label>
                             <textarea
@@ -2506,15 +2736,44 @@ export default function App() {
                         </form>
                       )}
 
-                      {prestasiList.length === 0 && (
-                        <p className="text-xs text-gray-500 px-1">Belum ada prestasi.</p>
+                      {/* Filter Tahun Pelajaran */}
+                      <div className="flex items-center justify-between px-1 py-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[11px] font-semibold text-gray-500">Tahun Pelajaran:</span>
+                          <select
+                            value={tahunPelajaranFilter}
+                            onChange={(e) => setTahunPelajaranFilter(e.target.value)}
+                            className="text-xs bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 font-bold text-gray-800 outline-none"
+                          >
+                            <option value="Semua">Semua Tahun Pelajaran</option>
+                            <option value="2025/2026">TP 2025/2026</option>
+                            <option value="2024/2025">TP 2024/2025</option>
+                            <option value="2023/2024">TP 2023/2024</option>
+                          </select>
+                        </div>
+                        <span className="text-[11px] text-gray-400">
+                          {prestasiList.filter((p) => tahunPelajaranFilter === 'Semua' || (p.tahunPelajaran || '2025/2026') === tahunPelajaranFilter).length} Prestasi
+                        </span>
+                      </div>
+
+                      {prestasiList.filter((p) => tahunPelajaranFilter === 'Semua' || (p.tahunPelajaran || '2025/2026') === tahunPelajaranFilter).length === 0 && (
+                        <p className="text-xs text-gray-500 px-1 py-2 bg-white rounded-xl text-center border border-gray-100">
+                          Belum ada prestasi tercatat untuk tahun pelajaran ini.
+                        </p>
                       )}
 
-                      {prestasiList.map((pres) => (
+                      {prestasiList
+                        .filter((p) => tahunPelajaranFilter === 'Semua' || (p.tahunPelajaran || '2025/2026') === tahunPelajaranFilter)
+                        .map((pres) => (
                         <div key={pres.id} className="rounded-card border border-line bg-surface p-3.5">
                           <div className="flex items-start justify-between gap-2">
                             <div>
-                              <span className="text-xs font-bold text-gray-900 block">{pres.judul}</span>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-xs font-bold text-gray-900 block">{pres.judul}</span>
+                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                                  TP {pres.tahunPelajaran || '2025/2026'} • {pres.semester || 'Genap'}
+                                </span>
+                              </div>
                               <p className="text-xs text-yellow-800 mt-0.5">
                                 Tingkat: {pres.tingkat} • Capaian: {pres.capaian}
                               </p>
@@ -2796,6 +3055,26 @@ export default function App() {
                       </p>
                     </section>
                   )}
+
+                  {/* Jadwal Pelajaran Mingguan Ananda (Senin - Jumat) */}
+                  <section className="rounded-card border border-line bg-surface p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <div>
+                        <h2 className="text-sm font-semibold text-ink flex items-center gap-2">
+                          <Calendar className="w-4 h-4 text-[#1B5E20]" />
+                          <span>Jadwal Pelajaran Ananda ({currentStudent.kelas})</span>
+                        </h2>
+                        <p className="mt-0.5 text-xs text-muted">
+                          Jadwal belajar mengajar hari Senin sampai dengan Jumat di kelas.
+                        </p>
+                      </div>
+                    </div>
+                    <JadwalPelajaranView
+                      currentClass={currentStudent.kelas}
+                      userRole={role}
+                      user={sessionUser}
+                    />
+                  </section>
                 </div>
               )}
 
@@ -3031,6 +3310,16 @@ export default function App() {
                       {pendingPrestasi.length}
                     </span>
                   )}
+                </button>
+
+                <button
+                  onClick={() => setGuruTab('jadwal')}
+                  className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl transition-all ${
+                    guruTab === 'jadwal' ? 'bg-[#2E7D32] text-white font-bold shadow-sm' : 'text-green-200 hover:bg-green-800'
+                  }`}
+                >
+                  <Calendar className="w-4 h-4" />
+                  <span>Jadwal Pelajaran</span>
                 </button>
 
                 <button
@@ -3290,122 +3579,226 @@ export default function App() {
                   </p>
                 </div>
 
-                {pendingPrestasi.length === 0 && (
-                  <div className="bg-white rounded-2xl border border-green-100 p-4 text-xs text-gray-500">
-                    Tidak ada pengajuan yang menunggu verifikasi.
+                {/* Filter Tahun Pelajaran & Status */}
+                <div className="bg-white rounded-2xl p-4 border border-green-100 shadow-xs flex flex-wrap items-center justify-between gap-3 text-xs">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-semibold text-gray-600">Tahun Pelajaran:</span>
+                    <select
+                      value={guruTahunFilter}
+                      onChange={(e) => setGuruTahunFilter(e.target.value)}
+                      className="px-2.5 py-1.5 bg-gray-50 border border-gray-200 rounded-xl font-medium text-gray-800 outline-none focus:border-[#2E7D32]"
+                    >
+                      <option value="Semua">Semua Tahun</option>
+                      <option value="2024/2025">2024/2025</option>
+                      <option value="2025/2026">2025/2026</option>
+                      <option value="2026/2027">2026/2027</option>
+                    </select>
+
+                    <span className="font-semibold text-gray-600 ml-2">Status:</span>
+                    <select
+                      value={guruStatusFilter}
+                      onChange={(e) => setGuruStatusFilter(e.target.value)}
+                      className="px-2.5 py-1.5 bg-gray-50 border border-gray-200 rounded-xl font-medium text-gray-800 outline-none focus:border-[#2E7D32]"
+                    >
+                      <option value="Semua">Semua Status</option>
+                      <option value="pending">Menunggu Verifikasi (Pending)</option>
+                      <option value="verified">Disetujui (Verified)</option>
+                      <option value="rejected">Ditolak (Rejected)</option>
+                    </select>
+                  </div>
+                  <div className="text-xs text-gray-500 font-semibold">
+                    Ditemukan: {
+                      prestasiList.filter((p) => {
+                        const matchT = guruTahunFilter === 'Semua' || p.tahunPelajaran === guruTahunFilter;
+                        const matchS = guruStatusFilter === 'Semua' || p.status === guruStatusFilter;
+                        return matchT && matchS;
+                      }).length
+                    } data
+                  </div>
+                </div>
+
+                {/* Daftar Pending Pengajuan */}
+                {(guruStatusFilter === 'Semua' || guruStatusFilter === 'pending') && (
+                  <div className="space-y-3">
+                    <h2 className="text-xs font-bold uppercase tracking-wider text-amber-800 px-1 flex items-center justify-between">
+                      <span>Pengajuan Menunggu Verifikasi</span>
+                      <span className="text-xs bg-amber-100 text-amber-900 px-2 py-0.5 rounded-full font-bold">
+                        {
+                          prestasiList.filter((p) => {
+                            const matchT = guruTahunFilter === 'Semua' || p.tahunPelajaran === guruTahunFilter;
+                            return p.status === 'pending' && matchT;
+                          }).length
+                        } Menunggu
+                      </span>
+                    </h2>
+
+                    {prestasiList.filter((p) => {
+                      const matchT = guruTahunFilter === 'Semua' || p.tahunPelajaran === guruTahunFilter;
+                      return p.status === 'pending' && matchT;
+                    }).length === 0 && (
+                      <div className="bg-white rounded-2xl border border-green-100 p-4 text-xs text-gray-500">
+                        Tidak ada pengajuan yang menunggu verifikasi untuk filter ini.
+                      </div>
+                    )}
+
+                    {prestasiList
+                      .filter((p) => {
+                        const matchT = guruTahunFilter === 'Semua' || p.tahunPelajaran === guruTahunFilter;
+                        return p.status === 'pending' && matchT;
+                      })
+                      .map((pres) => {
+                        const santri = students.find((s) => s.id === pres.siswa_id);
+                        return (
+                          <div
+                            key={pres.id}
+                            className="bg-white rounded-2xl border border-amber-200 shadow-sm p-4 space-y-3 text-xs"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="px-2 py-0.5 rounded bg-emerald-50 text-[#1B5E20] font-bold border border-emerald-200 text-xs">
+                                    TP {pres.tahunPelajaran || '2025/2026'} • Sem {pres.semester || 'Genap'}
+                                  </span>
+                                  <span className="text-gray-400">•</span>
+                                  <span className="text-gray-500 font-medium">{pres.tanggal}</span>
+                                </div>
+                                <span className="font-bold text-gray-900 text-sm block">{pres.judul}</span>
+                                <span className="text-gray-600 block mt-0.5">
+                                  Santri: <strong className="text-gray-800">{pres.nama_siswa || santri?.name || pres.siswa_id}</strong> ({pres.kelas || santri?.kelas || '-'}) • Rayon {pres.rayon || santri?.rayon || '-'}
+                                </span>
+                                <span className="text-gray-500 block mt-0.5">
+                                  {pres.kategori} • {pres.tingkat} • {pres.capaian}
+                                </span>
+                                {pres.deskripsi && (
+                                  <p className="text-gray-600 mt-1 bg-amber-50/50 p-2 rounded-lg border border-amber-100">{pres.deskripsi}</p>
+                                )}
+                              </div>
+                              <span className="text-xs font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-md shrink-0">
+                                PENDING
+                              </span>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-[130px_1fr] gap-2 pt-1 border-t border-gray-100">
+                              <div>
+                                <label className="block font-semibold text-gray-700 mb-1">Poin disetujui</label>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={5000}
+                                  value={verifyPoin[pres.id] ?? 100}
+                                  onChange={(e) =>
+                                    setVerifyPoin({ ...verifyPoin, [pres.id]: Number(e.target.value) })
+                                  }
+                                  className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-[#2E7D32]"
+                                />
+                              </div>
+                              <div>
+                                <label className="block font-semibold text-gray-700 mb-1">Catatan verifikasi</label>
+                                <input
+                                  type="text"
+                                  value={verifyCatatan[pres.id] ?? ''}
+                                  onChange={(e) =>
+                                    setVerifyCatatan({ ...verifyCatatan, [pres.id]: e.target.value })
+                                  }
+                                  placeholder="Opsional, mis. sertifikat terlampir dan sah"
+                                  className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-[#2E7D32]"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                disabled={verifyingId === pres.id}
+                                onClick={() => handleVerifyPrestasi(pres, 'verified')}
+                                className="flex-1 min-w-[160px] py-2.5 bg-[#2E7D32] hover:bg-[#1B5E20] disabled:bg-gray-300 text-white font-bold rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition-all"
+                              >
+                                <CheckCircle2 className="w-4 h-4" />
+                                {verifyingId === pres.id ? 'Memproses…' : 'Verifikasi & Beri Poin'}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={verifyingId === pres.id}
+                                onClick={() => handleVerifyPrestasi(pres, 'rejected')}
+                                className="px-4 py-2.5 bg-red-50 hover:bg-red-100 disabled:opacity-50 text-red-700 font-bold rounded-xl border border-red-200 flex items-center justify-center gap-1.5"
+                              >
+                                <AlertTriangle className="w-4 h-4" /> Tolak
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
                   </div>
                 )}
 
-                {pendingPrestasi.map((pres) => {
-                  const santri = students.find((s) => s.id === pres.siswa_id);
-                  return (
-                    <div
-                      key={pres.id}
-                      className="bg-white rounded-2xl border border-amber-200 shadow-sm p-4 space-y-3 text-xs"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <span className="font-bold text-gray-900 block">{pres.judul}</span>
-                          <span className="text-gray-500 block">
-                            {santri?.name ?? pres.siswa_id} • {santri?.kelas ?? '-'} • Rayon{' '}
-                            {pres.rayon}
-                          </span>
-                          <span className="text-gray-400 block">
-                            {pres.kategori} • {pres.tingkat} • {pres.capaian} • {pres.tanggal}
-                          </span>
-                          {pres.deskripsi && (
-                            <p className="text-gray-600 mt-1">{pres.deskripsi}</p>
-                          )}
-                        </div>
-                        <span className="text-xs font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-md shrink-0">
-                          PENDING
-                        </span>
-                      </div>
+                {/* Riwayat Keputusan Verifikasi */}
+                {(guruStatusFilter === 'Semua' || guruStatusFilter !== 'pending') && (
+                  <div className="space-y-2 pt-2">
+                    <h2 className="text-xs font-bold uppercase tracking-wider text-gray-500 px-1">
+                      Riwayat keputusan ({
+                        prestasiList.filter((p) => {
+                          const matchT = guruTahunFilter === 'Semua' || p.tahunPelajaran === guruTahunFilter;
+                          const matchS = guruStatusFilter === 'Semua' ? p.status !== 'pending' : p.status === guruStatusFilter;
+                          return matchT && matchS;
+                        }).length
+                      })
+                    </h2>
+                    {prestasiList
+                      .filter((p) => {
+                        const matchT = guruTahunFilter === 'Semua' || p.tahunPelajaran === guruTahunFilter;
+                        const matchS = guruStatusFilter === 'Semua' ? p.status !== 'pending' : p.status === guruStatusFilter;
+                        return matchT && matchS;
+                      })
+                      .map((pres) => {
+                        const santri = students.find((s) => s.id === pres.siswa_id);
+                        return (
+                          <div
+                            key={pres.id}
+                            className="bg-white rounded-xl border border-gray-200 p-3 text-xs flex items-start justify-between gap-2"
+                          >
+                            <div>
+                              <div className="flex items-center gap-1.5 mb-0.5">
+                                <span className="px-1.5 py-0.2 rounded bg-gray-100 text-gray-700 text-[10px] font-semibold">
+                                  TP {pres.tahunPelajaran || '2025/2026'} • {pres.semester || 'Genap'}
+                                </span>
+                                <span className="font-semibold text-gray-900">{pres.judul}</span>
+                              </div>
+                              <span className="text-gray-500 block">
+                                {pres.nama_siswa || santri?.name || pres.siswa_id} ({pres.kelas || santri?.kelas || '-'}) • {pres.tanggal}
+                              </span>
+                              {pres.catatan_verifikasi && (
+                                <p className="text-gray-600 mt-1 italic text-[11px]">
+                                  Catatan: "{pres.catatan_verifikasi}"
+                                </p>
+                              )}
+                            </div>
+                            <span
+                              className={`text-xs font-bold px-2.5 py-1 rounded-lg shrink-0 ${
+                                pres.status === 'verified'
+                                  ? 'bg-green-100 text-green-800 border border-green-200'
+                                  : 'bg-red-100 text-red-700 border border-red-200'
+                              }`}
+                            >
+                              {pres.status === 'verified' ? `+${pres.poin} Pts` : 'Ditolak'}
+                            </span>
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
+              </div>
+            )}
 
-                      <div className="grid grid-cols-1 sm:grid-cols-[120px_1fr] gap-2">
-                        <div>
-                          <label className="block font-semibold text-gray-700 mb-1">Poin disetujui</label>
-                          <input
-                            type="number"
-                            min={0}
-                            max={5000}
-                            value={verifyPoin[pres.id] ?? 100}
-                            onChange={(e) =>
-                              setVerifyPoin({ ...verifyPoin, [pres.id]: Number(e.target.value) })
-                            }
-                            className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-[#2E7D32]"
-                          />
-                        </div>
-                        <div>
-                          <label className="block font-semibold text-gray-700 mb-1">Catatan verifikasi</label>
-                          <input
-                            type="text"
-                            value={verifyCatatan[pres.id] ?? ''}
-                            onChange={(e) =>
-                              setVerifyCatatan({ ...verifyCatatan, [pres.id]: e.target.value })
-                            }
-                            placeholder="Opsional, mis. bukti sertifikat kurang"
-                            className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-[#2E7D32]"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          disabled={verifyingId === pres.id}
-                          onClick={() => handleVerifyPrestasi(pres, 'verified')}
-                          className="flex-1 min-w-[160px] py-2.5 bg-[#2E7D32] hover:bg-[#1B5E20] disabled:bg-gray-300 text-white font-bold rounded-xl flex items-center justify-center gap-1.5"
-                        >
-                          <CheckCircle2 className="w-4 h-4" />
-                          {verifyingId === pres.id ? 'Memproses…' : 'Verifikasi & Beri Poin'}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={verifyingId === pres.id}
-                          onClick={() => handleVerifyPrestasi(pres, 'rejected')}
-                          className="px-4 py-2.5 bg-red-50 hover:bg-red-100 disabled:opacity-50 text-red-700 font-bold rounded-xl border border-red-200 flex items-center justify-center gap-1.5"
-                        >
-                          <AlertTriangle className="w-4 h-4" /> Tolak
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-
-                <div className="space-y-2">
-                  <h2 className="text-xs font-bold uppercase tracking-wider text-gray-500 px-1">
-                    Riwayat keputusan
-                  </h2>
-                  {prestasiList.filter((p) => p.status !== 'pending').length === 0 && (
-                    <p className="text-xs text-gray-400 px-1">Belum ada keputusan.</p>
-                  )}
-                  {prestasiList
-                    .filter((p) => p.status !== 'pending')
-                    .map((pres) => (
-                      <div
-                        key={pres.id}
-                        className="bg-white rounded-xl border border-gray-200 p-3 text-xs flex items-start justify-between gap-2"
-                      >
-                        <div>
-                          <span className="font-semibold text-gray-800 block">{pres.judul}</span>
-                          <span className="text-gray-500 block">
-                            {students.find((s) => s.id === pres.siswa_id)?.name ?? pres.siswa_id} •{' '}
-                            {pres.tanggal}
-                          </span>
-                        </div>
-                        <span
-                          className={`text-xs font-bold px-2 py-0.5 rounded-md shrink-0 ${
-                            pres.status === 'verified'
-                              ? 'bg-green-100 text-green-800'
-                              : 'bg-red-100 text-red-700'
-                          }`}
-                        >
-                          {pres.status === 'verified' ? `+${pres.poin} Pts` : 'Ditolak'}
-                        </span>
-                      </div>
-                    ))}
-                </div>
+            {/* 2c. GURU: JADWAL PELAJARAN (SENIN S.D. JUMAT) */}
+            {guruTab === 'jadwal' && (
+              <div className="space-y-6 max-w-5xl mx-auto">
+                <JadwalPelajaranView
+                  currentClass={selectedClassForJadwal || students[0]?.kelas || 'X TKJ 1'}
+                  userRole={role}
+                  user={sessionUser}
+                  daftarKelas={daftarKelasSemua}
+                  onChangeClass={(cls) => setSelectedClassForJadwal(cls)}
+                />
               </div>
             )}
 

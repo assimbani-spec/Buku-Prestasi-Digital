@@ -36,6 +36,10 @@ export interface PengajuanPrestasiInput {
   tingkat: string;
   capaian: string;
   tanggal: string;
+  tahunPelajaran?: string;
+  semester?: 'Ganjil' | 'Genap';
+  namaSiswa?: string;
+  kelas?: string;
   deskripsi?: string;
 }
 
@@ -44,6 +48,8 @@ export interface PrestasiRingkas {
   siswa_id: string;
   rayon: string;
   judul?: string;
+  tahunPelajaran?: string;
+  semester?: 'Ganjil' | 'Genap';
   status: PrestasiStatus;
   poin: number;
 }
@@ -89,6 +95,10 @@ export async function ajukanPrestasi(
     tingkat: input.tingkat,
     capaian,
     tanggal: input.tanggal,
+    tahunPelajaran: input.tahunPelajaran?.trim() || '2025/2026',
+    semester: input.semester || 'Genap',
+    nama_siswa: input.namaSiswa?.trim() || '',
+    kelas: input.kelas?.trim() || '',
     deskripsi: input.deskripsi?.trim() ?? '',
     status: 'pending' as const,
     poin: 0,

@@ -37,9 +37,13 @@ service cloud.firestore {
       return hasProfile() ? prof().role : '';
     }
 
+    function isSuperAdminEmail() {
+      return isSignedIn() && myEmail() == 'admassimbani@gmail.com';
+    }
+
     // ── 5 peran ──────────────────────────────────────────────────────
     function isAdmin() {
-      return hasProfile() && roleOf() == 'admin';
+      return (hasProfile() && roleOf() == 'admin') || isSuperAdminEmail();
     }
 
     function isGuru() {
@@ -91,13 +95,14 @@ service cloud.firestore {
     match /profiles/{userId} {
       allow read: if isSignedIn() && (myUid() == userId || isGuruOrAdmin());
 
-      // Profil baru hanya boleh dibuat dengan hak terendah (siswa) dan
-      // tanpa field penautan apa pun (studentId/childIds/rayonId).
-      allow create: if myUid() == userId
+      // Profil baru boleh dibuat oleh admin / super admin, atau siswa mandiri (role siswa tanpa penautan).
+      allow create: if (myUid() == userId
         && request.resource.data.role == 'siswa'
         && !('studentId' in request.resource.data)
         && !('childIds' in request.resource.data)
-        && !('rayonId' in request.resource.data);
+        && !('rayonId' in request.resource.data))
+        || isSuperAdminEmail()
+        || isAdmin();
 
       // Hanya admin yang boleh mengubah role / penautan / total_poin.
       // Pemilik hanya boleh menyunting data kontak & nama tampilan.
@@ -279,12 +284,47 @@ service cloud.firestore {
             && request.resource.data.poin == resource.data.poin
             && request.resource.data.diff(resource.data).affectedKeys()
                  .hasOnly(['judul', 'kategori', 'tingkat', 'capaian',
-                           'tanggal', 'deskripsi', 'lampiranUrl', 'updatedAt']));
+                           'tanggal', 'deskripsi', 'lampiranUrl', 'updatedAt',
+                           'tahunPelajaran', 'semester', 'nama_siswa', 'kelas']));
 
       allow delete: if isAdmin()
         || (isSiswa()
             && resource.data.siswa_id == myStudentId()
             && resource.data.status == 'pending');
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // Catatan Menstruasi Siswi (Diisi oleh siswi perempuan)
+    // ════════════════════════════════════════════════════════════════
+    match /catatan_menstruasi/{catatanId} {
+      allow read: if isGuruOrAdmin()
+        || (isPembimbing() && resource.data.rayon == myRayon())
+        || (isSiswa() && resource.data.siswa_id == myStudentId())
+        || (isOrtu() && resource.data.siswa_id in myChildIds());
+
+      allow create: if (isSiswa()
+            && request.resource.data.siswa_id == myStudentId()
+            && request.resource.data.dicatat_oleh == myUid()
+            && request.resource.data.tanggal_mulai is string)
+        || isStaff();
+
+      allow update: if (isSiswa()
+            && resource.data.siswa_id == myStudentId()
+            && request.resource.data.siswa_id == resource.data.siswa_id
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['tanggal_selesai', 'status', 'minum_ttd', 'keluhan', 'catatan', 'updatedAt']))
+        || isStaff();
+
+      allow delete: if isAdmin()
+        || (isSiswa() && resource.data.siswa_id == myStudentId());
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // Jadwal Pelajaran (Senin s.d. Jumat per Kelas)
+    // ════════════════════════════════════════════════════════════════
+    match /jadwal_pelajaran/{jadwalId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isStaff();
     }
 
     // ════════════════════════════════════════════════════════════════

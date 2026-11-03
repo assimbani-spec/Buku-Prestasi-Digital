@@ -60,6 +60,7 @@ export const TambahSiswaModal: React.FC<TambahSiswaModalProps> = ({
 
   const [name, setName] = useState('');
   const [nisn, setNisn] = useState('');
+  const [gender, setGender] = useState<'L' | 'P'>('P');
   const [kelas, setKelas] = useState(DEFAULT_KELAS[2]);
   const [rayon, setRayon] = useState(DEFAULT_RAYON[1]);
   const [waliName, setWaliName] = useState('');
@@ -98,6 +99,7 @@ export const TambahSiswaModal: React.FC<TambahSiswaModalProps> = ({
     if (editingStudent) {
       setName(editingStudent.name || '');
       setNisn(editingStudent.nisn || '');
+      setGender(editingStudent.gender || 'P');
       setKelas(editingStudent.kelas || (daftarKelas[0] ?? ''));
       setRayon(editingStudent.rayon || (daftarRayon[0] ?? ''));
       setWaliName(editingStudent.waliName || '');
@@ -108,6 +110,7 @@ export const TambahSiswaModal: React.FC<TambahSiswaModalProps> = ({
     } else {
       setName('');
       setNisn('');
+      setGender('P');
       setKelas(daftarKelas[0] ?? DEFAULT_KELAS[0]);
       setRayon(daftarRayon[0] ?? DEFAULT_RAYON[0]);
       setWaliName('');
@@ -149,6 +152,7 @@ export const TambahSiswaModal: React.FC<TambahSiswaModalProps> = ({
             nisn,
             kelas,
             rayon,
+            gender,
             points: initialPoints,
             waliName,
             waliPhone,
@@ -164,6 +168,7 @@ export const TambahSiswaModal: React.FC<TambahSiswaModalProps> = ({
           nisn,
           kelas,
           rayon,
+          gender,
           points: initialPoints,
           waliName: waliName || undefined,
           waliPhone: waliPhone || undefined,
@@ -177,6 +182,7 @@ export const TambahSiswaModal: React.FC<TambahSiswaModalProps> = ({
             nisn,
             kelas,
             rayon,
+            gender,
             points: initialPoints,
             waliName,
             waliPhone,
@@ -290,16 +296,44 @@ export const TambahSiswaModal: React.FC<TambahSiswaModalProps> = ({
               </div>
 
               <div>
-                <label className="block font-semibold text-gray-700 mb-1">Poin Awal Karakter</label>
-                <div className="relative">
-                  <Award className="w-4 h-4 text-emerald-600 absolute left-3 top-2.5" />
-                  <input
-                    type="number"
-                    value={initialPoints}
-                    onChange={(e) => setInitialPoints(Number(e.target.value))}
-                    className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:border-[#2E7D32] outline-none font-bold text-green-900"
-                  />
+                <label className="block font-semibold text-gray-700 mb-1">Jenis Kelamin</label>
+                <div className="grid grid-cols-2 gap-1.5 pt-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setGender('L')}
+                    className={`py-1.5 px-2 rounded-xl border text-xs font-semibold transition-all ${
+                      gender === 'L'
+                        ? 'bg-blue-50 border-blue-400 text-blue-900 shadow-xs'
+                        : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'
+                    }`}
+                  >
+                    Putra (L)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setGender('P')}
+                    className={`py-1.5 px-2 rounded-xl border text-xs font-semibold transition-all ${
+                      gender === 'P'
+                        ? 'bg-rose-50 border-rose-400 text-rose-900 shadow-xs'
+                        : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'
+                    }`}
+                  >
+                    Putri (P)
+                  </button>
                 </div>
+              </div>
+            </div>
+
+            <div>
+              <label className="block font-semibold text-gray-700 mb-1">Poin Awal Karakter</label>
+              <div className="relative">
+                <Award className="w-4 h-4 text-emerald-600 absolute left-3 top-2.5" />
+                <input
+                  type="number"
+                  value={initialPoints}
+                  onChange={(e) => setInitialPoints(Number(e.target.value))}
+                  className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:border-[#2E7D32] outline-none font-bold text-green-900"
+                />
               </div>
             </div>
 

@@ -26,6 +26,7 @@ export interface TambahSiswaInput {
   nisn: string;
   kelas: string;
   rayon: string;
+  gender?: 'L' | 'P';
   points?: number;
   waliName?: string;
   waliPhone?: string;
@@ -94,12 +95,14 @@ export async function tambahSiswa(
   }
 
   const id = buatId();
+  const gender: 'L' | 'P' = input.gender === 'P' ? 'P' : 'L';
   const student: StudentRecord = {
     id,
     name,
     nisn,
     kelas,
     rayon,
+    gender,
     points: Math.round(poin),
     waliName: rapikan(input.waliName) || undefined,
     waliPhone: rapikan(input.waliPhone) || undefined,
@@ -124,7 +127,7 @@ export async function tambahSiswa(
       docId: id,
       siswaId: id,
       rayon,
-      after: { nama: name, nisn, kelas, rayon, poin: Math.round(poin) },
+      after: { nama: name, nisn, kelas, rayon, gender, poin: Math.round(poin) },
     })
   );
   await batch.commit();
@@ -137,6 +140,7 @@ export interface UpdateSiswaInput {
   nisn: string;
   kelas: string;
   rayon: string;
+  gender?: 'L' | 'P';
   points?: number;
   waliName?: string;
   waliPhone?: string;
@@ -190,6 +194,10 @@ export async function updateSiswa(
     studentEmail: studentEmail || null,
     updatedAt: serverTimestamp(),
   };
+
+  if (input.gender === 'L' || input.gender === 'P') {
+    payload.gender = input.gender;
+  }
 
   if (input.points !== undefined && Number.isFinite(input.points)) {
     const poin = Math.round(input.points);
