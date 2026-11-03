@@ -2,20 +2,25 @@
   "entities": {
     "UserProfile": {
       "title": "UserProfile",
-      "description": "Profil pengguna mencakup Siswa, Orang Tua, dan Guru/BK",
+      "description": "Profil pengguna mencakup 5 role: siswa, guru, pembimbing_rayon, orang_tua, dan admin",
       "type": "object",
       "properties": {
-        "full_name": { "type": "string", "maxLength": 100 },
-        "role": { "type": "string", "enum": ["siswa", "orang_tua", "guru"] },
+        "fullName": { "type": "string", "maxLength": 100 },
+        "role": { "type": "string", "enum": ["siswa", "guru", "pembimbing_rayon", "orang_tua", "admin"] },
         "kelas": { "type": "string", "maxLength": 50 },
         "rayon": { "type": "string", "maxLength": 50 },
-        "nisn": { "type": "string", "maxLength": 30 },
+        "rayonId": { "type": "string", "maxLength": 50 },
+        "studentId": { "type": "string", "maxLength": 128 },
+        "childIds": { "type": "array" },
         "anak_id": { "type": "string", "maxLength": 128 },
         "anak_nama": { "type": "string", "maxLength": 100 },
         "total_poin": { "type": "number" },
-        "email": { "type": "string", "maxLength": 100 }
+        "email": { "type": "string", "maxLength": 100 },
+        "phone": { "type": "string", "maxLength": 30 },
+        "avatarUrl": { "type": "string", "maxLength": 500 },
+        "active": { "type": "boolean" }
       },
-      "required": ["full_name", "role", "email"]
+      "required": ["fullName", "role", "email"]
     },
     "Student": {
       "title": "Student",
@@ -31,6 +36,7 @@
         "waliPhone": { "type": "string", "maxLength": 30 },
         "waliEmail": { "type": "string", "maxLength": 100 },
         "studentEmail": { "type": "string", "maxLength": 100 },
+        "lastJournalDate": { "type": "string", "maxLength": 20 },
         "dibuat_oleh": { "type": "string", "maxLength": 128 }
       },
       "required": ["name", "nisn", "kelas", "rayon"]
@@ -40,10 +46,10 @@
       "description": "Jurnal harian ibadah dan pembiasaan siswa dengan status audit pengisian tepat waktu vs susulan",
       "type": "object",
       "properties": {
-        "siswa_id": { "type": "string", "maxLength": 128 },
+        "student_id": { "type": "string", "maxLength": 128 },
         "tanggal": { "type": "string", "maxLength": 20 },
         "status_pengisian": { "type": "string", "enum": ["tepat_waktu", "susulan", "terkunci"] },
-        "submitted_at": { "type": "string", "maxLength": 40 },
+        "poin_harian": { "type": "number" },
         "subuh": { "type": "string", "maxLength": 30 },
         "dzuhur": { "type": "string", "maxLength": 30 },
         "ashar": { "type": "string", "maxLength": 30 },
@@ -58,7 +64,7 @@
         "grooming": { "type": "boolean" },
         "catatan": { "type": "string", "maxLength": 500 }
       },
-      "required": ["siswa_id", "tanggal"]
+      "required": ["student_id", "tanggal"]
     },
     "PembiasaanMingguan": {
       "title": "PembiasaanMingguan",
@@ -71,7 +77,8 @@
         "puasa_sunnah": { "type": "boolean" },
         "piket_rayon": { "type": "boolean" },
         "ttd_ortu": { "type": "boolean" },
-        "ttd_url": { "type": "string", "maxLength": 500000 }
+        "ttd_url": { "type": "string", "maxLength": 500000 },
+        "catatan_ortu": { "type": "string", "maxLength": 500 }
       },
       "required": ["siswa_id", "minggu_ke"]
     },
@@ -85,15 +92,129 @@
         "kode": { "type": "string", "maxLength": 20 },
         "deskripsi": { "type": "string", "maxLength": 500 },
         "poin": { "type": "number" },
+        "rayon": { "type": "string", "maxLength": 50 },
         "dicatat_oleh": { "type": "string", "maxLength": 128 }
       },
       "required": ["siswa_id", "tipe", "kode", "poin"]
+    },
+    "Prestasi": {
+      "title": "Prestasi",
+      "description": "Pengajuan dan verifikasi capaian prestasi santri",
+      "type": "object",
+      "properties": {
+        "siswa_id": { "type": "string", "maxLength": 128 },
+        "judul": { "type": "string", "maxLength": 150 },
+        "kategori": { "type": "string", "maxLength": 50 },
+        "tingkat": { "type": "string", "maxLength": 50 },
+        "capaian": { "type": "string", "maxLength": 50 },
+        "tanggal": { "type": "string", "maxLength": 20 },
+        "deskripsi": { "type": "string", "maxLength": 1000 },
+        "poin": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "verified", "rejected"] },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "verifiedBy": { "type": "string", "maxLength": 128 },
+        "catatan_verifikasi": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["siswa_id", "judul", "status", "createdBy"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Log jejak audit transaksi sistem",
+      "type": "object",
+      "properties": {
+        "actorId": { "type": "string", "maxLength": 128 },
+        "actorEmail": { "type": "string", "maxLength": 100 },
+        "actorRole": { "type": "string", "maxLength": 50 },
+        "action": { "type": "string", "maxLength": 50 },
+        "targetStudentId": { "type": "string", "maxLength": 128 },
+        "details": { "type": "object" }
+      },
+      "required": ["actorId", "action"]
+    },
+    "MasterKelas": {
+      "title": "MasterKelas",
+      "description": "Data master kelas santri",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "maxLength": 50 },
+        "waliKelas": { "type": "string", "maxLength": 100 }
+      },
+      "required": ["name"]
+    },
+    "MasterRayon": {
+      "title": "MasterRayon",
+      "description": "Data master rayon dan pembimbing rayon santri",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "maxLength": 50 },
+        "pembimbing": { "type": "string", "maxLength": 100 }
+      },
+      "required": ["name"]
+    },
+    "MasterKategoriPoin": {
+      "title": "MasterKategoriPoin",
+      "description": "Data master pasal & kode pelanggaran / apresiasi",
+      "type": "object",
+      "properties": {
+        "kode": { "type": "string", "maxLength": 20 },
+        "tipe": { "type": "string", "enum": ["apresiasi", "konsekuensi"] },
+        "deskripsi": { "type": "string", "maxLength": 500 },
+        "poin": { "type": "number" },
+        "kategori": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["kode", "tipe", "deskripsi", "poin"]
+    },
+    "Notifikasi": {
+      "title": "Notifikasi",
+      "description": "Notifikasi untuk pengguna",
+      "type": "object",
+      "properties": {
+        "user_id": { "type": "string", "maxLength": 128 },
+        "judul": { "type": "string", "maxLength": 150 },
+        "pesan": { "type": "string", "maxLength": 500 },
+        "dibaca": { "type": "boolean" }
+      },
+      "required": ["user_id", "pesan"]
+    },
+    "CatatanMenstruasi": {
+      "title": "CatatanMenstruasi",
+      "description": "Pencatatan siklus menstruasi khusus siswi perempuan dan dispensasi ibadah",
+      "type": "object",
+      "properties": {
+        "siswa_id": { "type": "string", "maxLength": 128 },
+        "nama_siswi": { "type": "string", "maxLength": 100 },
+        "kelas": { "type": "string", "maxLength": 50 },
+        "rayon": { "type": "string", "maxLength": 50 },
+        "tanggal_mulai": { "type": "string", "maxLength": 20 },
+        "tanggal_selesai": { "type": "string", "maxLength": 20 },
+        "status": { "type": "string", "enum": ["haid_aktif", "selesai_suci"] },
+        "minum_ttd": { "type": "boolean" },
+        "catatan": { "type": "string", "maxLength": 500 },
+        "dicatat_oleh": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["siswa_id", "tanggal_mulai", "status"]
+    },
+    "JadwalPelajaran": {
+      "title": "JadwalPelajaran",
+      "description": "Jadwal pelajaran sekolah Senin sampai Jumat",
+      "type": "object",
+      "properties": {
+        "kelas": { "type": "string", "maxLength": 50 },
+        "hari": { "type": "string", "enum": ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"] },
+        "jam_mulai": { "type": "string", "maxLength": 10 },
+        "jam_selesai": { "type": "string", "maxLength": 10 },
+        "mata_pelajaran": { "type": "string", "maxLength": 100 },
+        "guru_pengampu": { "type": "string", "maxLength": 100 },
+        "ruang": { "type": "string", "maxLength": 50 },
+        "catatan": { "type": "string", "maxLength": 300 }
+      },
+      "required": ["kelas", "hari", "jam_mulai", "jam_selesai", "mata_pelajaran"]
     }
   },
   "firestore": {
     "/profiles/{userId}": {
       "schema": { "$ref": "#/entities/UserProfile" },
-      "description": "Dokumen profil user"
+      "description": "Dokumen profil user dengan 5 role"
     },
     "/students/{studentId}": {
       "schema": { "$ref": "#/entities/Student" },
@@ -110,6 +231,38 @@
     "/poin_log/{logId}": {
       "schema": { "$ref": "#/entities/PoinLog" },
       "description": "Riwayat mutasi poin karakter"
+    },
+    "/prestasi/{prestasiId}": {
+      "schema": { "$ref": "#/entities/Prestasi" },
+      "description": "Pengajuan dan verifikasi capaian prestasi santri"
+    },
+    "/catatan_menstruasi/{catatanId}": {
+      "schema": { "$ref": "#/entities/CatatanMenstruasi" },
+      "description": "Catatan siklus menstruasi siswi putri"
+    },
+    "/jadwal_pelajaran/{jadwalId}": {
+      "schema": { "$ref": "#/entities/JadwalPelajaran" },
+      "description": "Jadwal pelajaran mingguan Senin sampai Jumat"
+    },
+    "/audit_log/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Log jejak audit sistem append-only"
+    },
+    "/master_kelas/{kelasId}": {
+      "schema": { "$ref": "#/entities/MasterKelas" },
+      "description": "Data master kelas"
+    },
+    "/master_rayon/{rayonId}": {
+      "schema": { "$ref": "#/entities/MasterRayon" },
+      "description": "Data master rayon"
+    },
+    "/master_kategori_poin/{kode}": {
+      "schema": { "$ref": "#/entities/MasterKategoriPoin" },
+      "description": "Data master kategori poin"
+    },
+    "/notifikasi/{notifId}": {
+      "schema": { "$ref": "#/entities/Notifikasi" },
+      "description": "Dokumen notifikasi sistem"
     }
   }
 }

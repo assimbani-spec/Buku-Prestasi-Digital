@@ -11,6 +11,7 @@ import {
   collection,
   db,
   doc,
+  getDoc,
   getDocs,
   query,
   serverTimestamp,
@@ -26,6 +27,7 @@ export interface TambahSiswaInput {
   nisn: string;
   kelas: string;
   rayon: string;
+  gender?: 'L' | 'P';
   points?: number;
   waliName?: string;
   waliPhone?: string;
@@ -94,12 +96,14 @@ export async function tambahSiswa(
   }
 
   const id = buatId();
+  const gender: 'L' | 'P' = input.gender === 'P' ? 'P' : 'L';
   const student: StudentRecord = {
     id,
     name,
     nisn,
     kelas,
     rayon,
+    gender,
     points: Math.round(poin),
     waliName: rapikan(input.waliName) || undefined,
     waliPhone: rapikan(input.waliPhone) || undefined,
@@ -132,10 +136,153 @@ export async function tambahSiswa(
       docId: id,
       siswaId: id,
       rayon,
-      after: { nama: name, nisn, kelas, rayon, poin: Math.round(poin) },
+      after: { nama: name, nisn, kelas, rayon, gender, poin: Math.round(poin) },
     })
   );
   await batch.commit();
 
   return student;
+}
+
+export interface UpdateSiswaInput {
+  name: string;
+  nisn: string;
+  kelas: string;
+  rayon: string;
+  gender?: 'L' | 'P';
+  points?: number;
+  waliName?: string;
+  waliPhone?: string;
+  waliEmail?: string;
+  studentEmail?: string;
+}
+
+/**
+ * Memperbarui data santri yang sudah ada (hanya guru atau admin).
+ */
+export async function updateSiswa(
+  studentId: string,
+  input: UpdateSiswaInput,
+  aktor: Aktor
+): Promise<void> {
+  butuhAktor(aktor);
+  if (!studentId?.trim()) throw new Error('ID santri wajib diisi.');
+
+  const name = rapikan(input.name);
+  const nisn = rapikan(input.nisn);
+  const kelas = rapikan(input.kelas);
+  const rayon = rapikan(input.rayon);
+  const waliEmail = rapikan(input.waliEmail).toLowerCase();
+  const studentEmail = rapikan(input.studentEmail).toLowerCase();
+
+  if (name.length < 2) throw new Error('Nama lengkap santri wajib diisi.');
+  if (!nisn) throw new Error('NISN santri wajib diisi.');
+  if (!NISN_PATTERN.test(nisn)) throw new Error('NISN harus berupa 4 sampai 20 angka.');
+  if (!kelas) throw new Error('Kelas santri wajib dipilih.');
+  if (!rayon) throw new Error('Rayon santri wajib dipilih.');
+  if (!emailValid(waliEmail)) throw new Error('Format email wali belum benar.');
+  if (!emailValid(studentEmail)) throw new Error('Format email santri belum benar.');
+
+  // Cek NISN tidak bentrok dengan santri lain
+  const existing = await getDocs(
+    query(collection(db, 'students'), where('nisn', '==', nisn))
+  );
+  const duplicate = existing.docs.find((d) => d.id !== studentId);
+  if (duplicate) {
+    throw new Error('NISN itu sudah dipakai oleh santri lain.');
+  }
+
+  const payload: Record<string, unknown> = {
+    name,
+    nisn,
+    kelas,
+    rayon,
+    waliName: rapikan(input.waliName) || null,
+    waliPhone: rapikan(input.waliPhone) || null,
+    waliEmail: waliEmail || null,
+    studentEmail: studentEmail || null,
+    updatedAt: serverTimestamp(),
+  };
+
+  if (input.gender === 'L' || input.gender === 'P') {
+    payload.gender = input.gender;
+  }
+
+  if (input.points !== undefined && Number.isFinite(input.points)) {
+    const poin = Math.round(input.points);
+    if (poin >= 0 && poin <= POIN_AWAL_MAKS) {
+      payload.points = poin;
+    }
+  }
+
+  // NISN bisa berubah lewat edit. Pindahkan kunci keunikan dalam batch yang
+  // sama supaya NISN lama bebas dipakai dan NISN baru langsung terkunci.
+  const lama = await getDoc(doc(db, 'students', studentId));
+  const nisnLama = lama.exists() ? rapikan(String(lama.data().nisn ?? '')) : '';
+  const nisnBerubah = Boolean(nisnLama) && nisnLama !== nisn;
+
+  if (nisnBerubah) {
+    const kunciBaru = await getDoc(doc(db, 'nisn_index', nisn));
+    const pemilik = kunciBaru.exists() ? String(kunciBaru.data().studentId ?? '') : '';
+    if (pemilik && pemilik !== studentId) {
+      throw new Error('NISN itu sudah dipakai oleh santri lain.');
+    }
+  }
+
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'students', studentId), payload, { merge: true });
+  if (nisnBerubah) {
+    batch.delete(doc(db, 'nisn_index', nisnLama));
+    batch.set(doc(db, 'nisn_index', nisn), {
+      nisn,
+      studentId,
+      createdAt: serverTimestamp(),
+    });
+  }
+  batch.set(
+    newAuditRef(),
+    buildAuditPayload({
+      actor: aktor,
+      action: 'student_update',
+      collectionName: 'students',
+      docId: studentId,
+      siswaId: studentId,
+      rayon,
+      after: { nama: name, nisn, kelas, rayon },
+    })
+  );
+  await batch.commit();
+}
+
+/**
+ * Menghapus santri dari database (hanya admin).
+ */
+export async function hapusSiswa(
+  studentId: string,
+  studentName: string,
+  aktor: Aktor
+): Promise<void> {
+  butuhAktor(aktor);
+  if (!studentId?.trim()) throw new Error('ID santri wajib diisi.');
+
+  // Lepaskan kunci NISN agar nomor itu bisa dipakai lagi setelah santri
+  // dihapus. Tanpa ini, NISN lama terus dianggap terpakai selamanya.
+  const lama = await getDoc(doc(db, 'students', studentId));
+  const nisn = lama.exists() ? rapikan(String(lama.data().nisn ?? '')) : '';
+
+  const batch = writeBatch(db);
+  if (nisn) batch.delete(doc(db, 'nisn_index', nisn));
+  batch.delete(doc(db, 'students', studentId));
+  batch.set(
+    newAuditRef(),
+    buildAuditPayload({
+      actor: aktor,
+      action: 'student_delete',
+      collectionName: 'students',
+      docId: studentId,
+      siswaId: studentId,
+      before: { nama: studentName },
+    })
+  );
+  await batch.commit();
 }

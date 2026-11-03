@@ -8,7 +8,7 @@ sebelum aplikasi dipakai data sekolah sungguhan.
 | Backend | Status | Cocok untuk |
 | :--- | :--- | :--- |
 | `local` (localStorage) | siap | demo, pelatihan, satu perangkat |
-| `firestore` | siap dipakai, 63 skenario aturan lulus di Firebase Emulator (`npm run test:rules`) | produksi dengan Firebase |
+| `firestore` | siap dipakai, 66 skenario aturan lulus di Firebase Emulator (`npm run test:rules`) | produksi dengan Firebase |
 | Supabase | skema siap, adapter belum | produksi alternatif |
 | Cloudflare D1 | skema dan wrangler siap, Worker belum | produksi alternatif |
 

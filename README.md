@@ -20,6 +20,31 @@ Aplikasi modern untuk digitalisasi buku catatan pembiasaan santri/siswa, pencata
 
 ---
 
+## Struktur modul
+
+`App.tsx` hanya menyusun kerangka dan rute. State serta aksi bersama berada di
+`src/app/useAppModel.ts`, sedangkan tampilan tiap peran dipisah per modul:
+
+```
+src/
+  App.tsx                     kerangka, login, dan pemilihan rute
+  app/useAppModel.ts          state, query, dan aksi lintas modul
+  features/
+    auth/LoginPage.tsx        formulir masuk
+    siswa/SiswaDashboard.tsx  dashboard santri
+    guru/GuruDashboard.tsx    dashboard guru dan BK
+    ortu/OrtuDashboard.tsx    dashboard wali santri
+    siswa/siswa.ts            tambah, ubah, hapus santri + kunci NISN
+    prestasi/prestasi.ts      pengajuan dan verifikasi prestasi
+  components/                 panel admin, jadwal, kalender, modal, navigasi
+  lib/                        data, auth, rbac, audit, format, tipe
+```
+
+Setiap dashboard menerima satu `AppModel`, jadi tidak ada salinan state atau
+aturan akses di berkas tampilan.
+
+---
+
 ## Arah desain
 
 Arah lengkap dan alasan setiap keputusan ada di [`DESIGN.md`](DESIGN.md). Ringkasnya:
@@ -262,7 +287,7 @@ ada pada bagian `profiles/{uid}` di atas.
 
 ## Verifikasi RBAC (sebelum dipakai pengguna nyata)
 
-Rules sudah diuji terhadap emulator Firestore (63 skenario, 63 lulus, termasuk
+Rules sudah diuji terhadap emulator Firestore (66 skenario, 66 lulus, termasuk
 scoping `pembiasaan_non_rutin`, akun nonaktif, NISN ganda, dan jurnal ganda).
 Untuk mengulang di mesin Anda:
 

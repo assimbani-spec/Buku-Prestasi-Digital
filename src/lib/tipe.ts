@@ -31,6 +31,7 @@ export interface UserProfile {
   total_poin?: number;
   phone?: string;
   emailVerified?: boolean;
+  gender?: 'L' | 'P';
   createdAt?: any;
   updatedAt?: any;
 }
@@ -43,6 +44,8 @@ export interface StudentRecord {
   kelas: string;
   rayon: string;
   points: number;
+  /** Jenis Kelamin: L = Laki-laki, P = Perempuan */
+  gender?: 'L' | 'P';
   /** UID Firebase Authentication jika akun santri sudah ditautkan. */
   uid?: string;
   waliName?: string;
@@ -65,6 +68,14 @@ export interface PrestasiRecord {
   tingkat: string;
   capaian: string;
   tanggal: string;
+  /** Tahun pelajaran, misal: '2024/2025', '2025/2026' */
+  tahunPelajaran?: string;
+  /** Semester prestasi */
+  semester?: 'Ganjil' | 'Genap';
+  /** Nama santri (cache untuk kemudahan tampilan di tabel verifikasi guru) */
+  nama_siswa?: string;
+  /** Kelas santri saat mengajukan */
+  kelas?: string;
   deskripsi?: string;
   status: PrestasiStatus;
   /** 0 selama pending; diisi staf saat verifikasi. */
@@ -74,6 +85,40 @@ export interface PrestasiRecord {
   verifiedAt?: any;
   catatan_verifikasi?: string;
   createdAt?: any;
+}
+
+// Kalender & catatan siklus menstruasi untuk siswi perempuan
+export interface MenstruasiRecord {
+  id: string;
+  siswa_id: string;
+  nama_siswi?: string;
+  kelas?: string;
+  rayon?: string;
+  tanggal_mulai: string;
+  tanggal_selesai?: string | null;
+  status: 'haid_aktif' | 'selesai_suci';
+  minum_ttd?: boolean;
+  keluhan?: string[];
+  catatan?: string;
+  dicatat_oleh?: string;
+  createdAt?: any;
+  updatedAt?: any;
+}
+
+// Jadwal Pelajaran (Senin s.d. Jumat)
+export type HariSekolah = 'Senin' | 'Selasa' | 'Rabu' | 'Kamis' | 'Jumat';
+
+export interface JadwalPelajaranRecord {
+  id: string;
+  kelas: string;
+  hari: HariSekolah;
+  jam_mulai: string;
+  jam_selesai: string;
+  mata_pelajaran: string;
+  guru_pengampu: string;
+  ruang?: string;
+  urutan?: number;
+  catatan?: string;
 }
 
 // Entri audit log (append-only).

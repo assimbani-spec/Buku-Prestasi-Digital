@@ -22,6 +22,8 @@ export type AuditAction =
   | 'non_rutin_save'
   | 'ttd_ortu'
   | 'student_create'
+  | 'student_update'
+  | 'student_delete'
   | 'master_create'
   | 'master_update'
   | 'master_delete'

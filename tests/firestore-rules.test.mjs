@@ -74,6 +74,21 @@ batchGanda.set(doc(guru, 'students', 's4'), { name: 'Siswa Empat', nisn: '003', 
 batchGanda.set(doc(guru, 'nisn_index', '003'), { nisn: '003', studentId: 's4', createdAt: serverTimestamp() });
 await check('NISN ganda ditolak walau dicek ulang', batchGanda.commit(), false);
 
+const batchPindah = writeBatch(guru);
+batchPindah.update(doc(guru, 'students', 's3'), { nisn: '004', updatedAt: serverTimestamp() });
+batchPindah.delete(doc(guru, 'nisn_index', '003'));
+batchPindah.set(doc(guru, 'nisn_index', '004'), { nisn: '004', studentId: 's3', createdAt: serverTimestamp() });
+await check('guru ubah NISN dengan kunci baru dalam batch', batchPindah.commit(), true);
+await check('guru ubah NISN tanpa kunci baru (harus tolak)', updateDoc(doc(guru, 'students', 's3'), { nisn: '005' }), false);
+await check('guru lepas kunci NISN saat santri dihapus', (async () => {
+  const batchHapus = writeBatch(admin);
+  batchHapus.delete(doc(admin, 'nisn_index', '004'));
+  batchHapus.delete(doc(admin, 'students', 's3'));
+  await batchHapus.commit();
+  const sisa = await getDoc(doc(admin, 'nisn_index', '004'));
+  if (sisa.exists()) throw new Error('kunci NISN masih ada');
+})(), true);
+
 // ── Jurnal pembiasaan harian ────────────────────────────────────────
 const jurnalSiswa = { siswa_id: 'uidSiswa', student_id: 's1', rayon: 'Rayon A', tanggal: '2026-11-01', poin_harian: 10 };
 await check('siswa buat jurnal tanggal baru', setDoc(doc(siswa, 'pembiasaan_harian', 'uidSiswa_2026-11-01'), jurnalSiswa), true);
