@@ -656,7 +656,7 @@ export const KalenderMenstruasi: React.FC<KalenderMenstruasiProps> = ({
             <strong>Batas Maksimal Haid:</strong> 15 hari 15 malam. Jika darah masih keluar setelah 15 hari, maka itu dihukumi darah <em>Istihadhah</em> (wajib mandi dan wajib sholat).
           </li>
           <li>
-            <strong>Dispensasi di BKP Digital:</strong> Selama berstatus haid, kewajiban sholat otomatis mendapat dispensasi (tidak dianggap alpa sholat dan tidak mengurangi nilai pembiasaan karakter).
+            <strong>Dispensasi di Jejak Digital:</strong> Selama berstatus haid, kewajiban sholat otomatis mendapat dispensasi (tidak dianggap alpa sholat dan tidak mengurangi nilai pembiasaan karakter).
           </li>
         </ul>
       </div>

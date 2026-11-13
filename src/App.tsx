@@ -44,7 +44,7 @@ export default function App() {
       <div className="flex min-h-screen items-center justify-center bg-paper">
         <div className="text-center text-[#1B5E20] text-sm font-semibold">
           <div className="w-8 h-8 border-4 border-green-200 border-t-[#2E7D32] rounded-full animate-spin mx-auto mb-3" />
-          Memuat BKP Digital…
+          Memuat Jejak Digital…
         </div>
       </div>
     );
@@ -80,13 +80,34 @@ export default function App() {
         </div>
       )}
 
-      {/* TOPBAR: identitas aplikasi */}
-      <div className="z-40 flex shrink-0 items-center gap-2 border-b border-brand-950 bg-brand-900 px-4 py-2 text-xs text-white">
+      {/* TOPBAR: identitas aplikasi & pengalih peran admin */}
+      <div className="print-hide z-40 flex shrink-0 items-center justify-between gap-2 border-b border-brand-950 bg-brand-900 px-4 py-2 text-xs text-white">
         <div className="flex items-center gap-2">
           <BookOpen className="h-4 w-4 text-brand-100" aria-hidden="true" />
-          <span className="font-semibold tracking-tight">BKP Digital</span>
-          <span className="hidden text-brand-100 sm:inline">SMK Thibbil Qulub Assimbani</span>
+          <span className="font-semibold tracking-tight">Jejak Digital</span>
+          <span className="hidden text-brand-100 sm:inline">{app.schoolConfig.sekolah || 'SMK Thibbil Qulub Assimbani'}</span>
         </div>
+        {profile?.role === 'admin' && (
+          <div className="flex items-center gap-2">
+            {currentRoute === 'guru' ? (
+              <button
+                type="button"
+                onClick={() => setCurrentRoute('admin')}
+                className="rounded-lg bg-white/15 hover:bg-white/25 border border-white/25 px-3 py-1 font-semibold text-white transition-colors"
+              >
+                ← Kembali ke Panel Admin
+              </button>
+            ) : currentRoute === 'admin' ? (
+              <button
+                type="button"
+                onClick={() => setCurrentRoute('guru')}
+                className="rounded-lg bg-white/15 hover:bg-white/25 border border-white/25 px-3 py-1 font-semibold text-white transition-colors"
+              >
+                Buka Dashboard Guru / BK →
+              </button>
+            ) : null}
+          </div>
+        )}
       </div>
 
       {/* ═══════════════════════════════════════════ */}
@@ -110,6 +131,7 @@ export default function App() {
           resetLoading={app.resetLoading}
           onLoginGoogle={app.handleLoginGoogle}
           googleLoading={app.googleLoading}
+          schoolName={app.schoolConfig.sekolah}
         />
       )}
 

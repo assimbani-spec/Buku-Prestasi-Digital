@@ -18,8 +18,12 @@ export type AuditAction =
   | 'prestasi_verify'
   | 'prestasi_reject'
   | 'poin_create'
+  | 'poin_koreksi'
   | 'jurnal_save'
   | 'non_rutin_save'
+  | 'non_rutin_verify'
+  | 'non_rutin_reject'
+  | 'uks_catat'
   | 'ttd_ortu'
   | 'student_create'
   | 'student_update'
@@ -29,7 +33,9 @@ export type AuditAction =
   | 'master_delete'
   | 'user_create'
   | 'user_update'
-  | 'user_delete';
+  | 'user_delete'
+  | 'tutup_tahun_ajaran'
+  | 'siswa_aktifkan_kembali';
 
 export interface AuditActor {
   uid: string;

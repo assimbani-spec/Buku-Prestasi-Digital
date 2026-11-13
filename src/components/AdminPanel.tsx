@@ -45,18 +45,35 @@ import {
   Filter,
   FileSpreadsheet,
   Download,
+  Building2,
+  Save,
+  CalendarClock,
+  RotateCcw,
 } from 'lucide-react';
 import { db, isLocalBackend } from '../lib/data';
-import type { UserProfile, AuditLogRecord, StudentRecord } from '../lib/tipe';
+import type {
+  UserProfile,
+  AuditLogRecord,
+  StudentRecord,
+  StudentLifecycleStatus,
+} from '../lib/tipe';
 import { newAuditRef, buildAuditPayload } from '../lib/audit';
 import { canManageMasterData, roleLabel, type Role } from '../lib/rbac';
 import { hashPassword, normalizeEmail, MIN_PASSWORD_LENGTH } from '../lib/localAuth';
 import { hapusSiswa } from '../features/siswa/siswa';
+import { aktifkanKembaliSantri } from '../features/admin/kenaikanKelas';
 import { createAccountThroughApp, sendPasswordResetThroughApp } from '../lib/createUserHelper';
 import { downloadTemplateSiswa, downloadTemplateKategori } from '../lib/excelHelper';
+import {
+  loadLocalSchoolConfig,
+  saveSchoolConfigToServer,
+  subscribeSchoolConfig,
+  type SchoolConfig,
+} from '../lib/schoolConfig';
 import TambahSiswaModal from './TambahSiswaModal';
 import ImportSiswaModal from './ImportSiswaModal';
 import ImportKategoriModal from './ImportKategoriModal';
+import TutupTahunAjaranPanel from './TutupTahunAjaranPanel';
 
 interface AdminPanelProps {
   profile: UserProfile | null;
@@ -88,6 +105,10 @@ interface SantriOption {
   nisn: string;
   kelas: string;
   rayon: string;
+  gender?: 'L' | 'P';
+  statusSiswa?: StudentLifecycleStatus;
+  tahunAjaran?: string;
+  tahunLulus?: string;
   points: number;
   waliName?: string;
   waliPhone?: string;
@@ -115,7 +136,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   onLogout,
   onOpenStaffDashboard,
 }) => {
-  const [tab, setTab] = useState<'master' | 'santri' | 'pengguna' | 'audit'>('master');
+  const [tab, setTab] = useState<'master' | 'santri' | 'pengguna' | 'tahun_ajaran' | 'audit'>('master');
   const [kelas, setKelas] = useState<KelasRow[]>([]);
   const [rayon, setRayon] = useState<RayonRow[]>([]);
   const [kategori, setKategori] = useState<KategoriRow[]>([]);
@@ -140,6 +161,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [showImportKategori, setShowImportKategori] = useState(false);
   const [editingSantri, setEditingSantri] = useState<StudentRecord | null>(null);
   const [santriKelasFilter, setSantriKelasFilter] = useState('semua');
+  const [santriStatusFilter, setSantriStatusFilter] = useState<'aktif' | 'lulus' | 'semua'>('aktif');
   const [santriSearch, setSantriSearch] = useState('');
   const [penggunaRoleFilter, setPenggunaRoleFilter] = useState<'semua' | Role>('semua');
   const [penggunaSearch, setPenggunaSearch] = useState('');
@@ -161,11 +183,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     poin: 100,
   });
 
+  const [schoolConfig, setSchoolConfig] = useState<SchoolConfig>(loadLocalSchoolConfig);
+  const [savingSchoolConfig, setSavingSchoolConfig] = useState(false);
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   const isAdmin = canManageMasterData(profile?.role);
+
+  useEffect(() => {
+    return subscribeSchoolConfig(setSchoolConfig);
+  }, []);
 
   useEffect(() => {
     if (!profile) return;
@@ -233,6 +262,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 nisn: data.nisn ?? '-',
                 kelas: data.kelas ?? '-',
                 rayon: data.rayon ?? '-',
+                gender: data.gender === 'P' ? 'P' : 'L',
+                statusSiswa:
+                  data.statusSiswa === 'lulus' || data.statusSiswa === 'arsip'
+                    ? data.statusSiswa
+                    : 'aktif',
+                tahunAjaran: data.tahunAjaran ?? '',
+                tahunLulus: data.tahunLulus ?? '',
                 points: Number(data.points) || 0,
                 waliName: data.waliName ?? '',
                 waliPhone: data.waliPhone ?? '',
@@ -297,6 +333,29 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       })
     );
     await batch.commit();
+  };
+
+  const handleSaveSchoolConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!profile || !isAdmin) {
+      setError('Hanya administrator yang dapat mengubah profil sekolah dan penandatangan.');
+      return;
+    }
+    if (!schoolConfig.sekolah.trim()) {
+      setError('Nama sekolah / pondok wajib diisi.');
+      return;
+    }
+    setSavingSchoolConfig(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await saveSchoolConfigToServer(schoolConfig, profile.uid);
+      setNotice('Profil sekolah, kop surat, dan nama penandatangan (Waka Kesiswaan / Kepala Sekolah) berhasil disimpan.');
+    } catch (err) {
+      setError('Gagal menyimpan profil sekolah: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setSavingSchoolConfig(false);
+    }
   };
 
   const handleAddKelas = async (e: React.FormEvent) => {
@@ -446,7 +505,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           ? `siswa.${chosen.nisn}@sekolah.id`
           : `${sanitized}@sekolah.id`);
       const autoPass =
-        chosen.nisn && chosen.nisn !== '-' ? `Siswa${chosen.nisn}` : 'BkpDigital123';
+        chosen.nisn && chosen.nisn !== '-' ? `Siswa${chosen.nisn}` : 'JejakDigital123';
       setUserForm((prev) => ({
         ...prev,
         fullName: prev.fullName || chosen.name,
@@ -464,7 +523,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       const defaultEmail =
         item.studentEmail ||
         (item.nisn && item.nisn !== '-' ? `siswa.${item.nisn}@sekolah.id` : `${sanitizedName}@sekolah.id`);
-      const defaultPass = item.nisn && item.nisn !== '-' ? `Siswa${item.nisn}` : 'BkpDigital123';
+      const defaultPass = item.nisn && item.nisn !== '-' ? `Siswa${item.nisn}` : 'JejakDigital123';
       setUserForm({
         fullName: item.name,
         email: defaultEmail,
@@ -477,7 +536,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       const defaultEmail =
         item.waliEmail ||
         (item.nisn && item.nisn !== '-' ? `ortu.${item.nisn}@sekolah.id` : `ortu.${sanitizedName}@sekolah.id`);
-      const defaultPass = item.nisn && item.nisn !== '-' ? `Ortu${item.nisn}` : 'BkpDigital123';
+      const defaultPass = item.nisn && item.nisn !== '-' ? `Ortu${item.nisn}` : 'JejakDigital123';
       setUserForm({
         fullName: item.waliName || `Orang Tua dari ${item.name}`,
         email: defaultEmail,
@@ -709,7 +768,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
             <div>
               <h2 className="text-sm font-bold leading-tight">Panel Admin</h2>
-              <span className="text-xs text-green-300">BKP Digital</span>
+              <span className="text-xs text-green-300">Jejak Digital</span>
             </div>
           </div>
 
@@ -740,6 +799,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             >
               <UserPlus className="w-4 h-4" aria-hidden="true" />
               <span>Pengguna</span>
+            </button>
+            <button
+              onClick={() => setTab('tahun_ajaran')}
+              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl transition-all ${
+                tab === 'tahun_ajaran' ? 'bg-[#2E7D32] font-bold' : 'text-green-200 hover:bg-green-900'
+              }`}
+            >
+              <CalendarClock className="w-4 h-4" aria-hidden="true" />
+              <span>Tahun Ajaran & Kenaikan</span>
             </button>
             <button
               onClick={() => setTab('audit')}
@@ -779,12 +847,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             <BookOpen className="w-5 h-5 text-[#1B5E20]" />
             <h1 className="text-lg font-bold">
               {tab === 'master'
-                ? 'Master Data BKP'
+                ? 'Master Data Jejak'
                 : tab === 'santri'
                   ? 'Data Santri'
                   : tab === 'pengguna'
                     ? 'Akun Pengguna'
-                    : 'Jejak Audit Transaksi'}
+                    : tab === 'tahun_ajaran'
+                      ? 'Kenaikan Kelas & Tutup Tahun Ajaran'
+                      : 'Jejak Audit Transaksi'}
             </h1>
           </div>
 
@@ -807,6 +877,139 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
           {tab === 'master' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {/* Profil Sekolah, Kop Surat & Penandatangan */}
+              <section className="bg-white rounded-2xl border border-green-100 shadow-sm p-4 space-y-3 lg:col-span-2">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 pb-2.5">
+                  <div>
+                    <h2 className="text-sm font-bold flex items-center gap-2 text-gray-900">
+                      <Building2 className="w-4 h-4 text-[#2E7D32]" /> Profil Sekolah, Kop Surat & Penandatangan
+                    </h2>
+                    <p className="text-[11px] text-gray-500 mt-0.5">
+                      Digunakan pada kop surat cetak PDF, ekspor Excel, dan kolom pengesahan Waka Kesiswaan / Kepala Sekolah.
+                    </p>
+                  </div>
+                </div>
+                <form onSubmit={handleSaveSchoolConfig} className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                  <div>
+                    <label className="block font-semibold text-gray-700 mb-1">Nama Yayasan / Lembaga</label>
+                    <input
+                      type="text"
+                      value={schoolConfig.yayasan}
+                      onChange={(e) => setSchoolConfig((prev) => ({ ...prev, yayasan: e.target.value }))}
+                      placeholder="Contoh: YAYASAN PONDOK PESANTREN ASSIMBANI"
+                      className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-[#2E7D32]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-gray-700 mb-1">
+                      Nama Sekolah / Pondok <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={schoolConfig.sekolah}
+                      onChange={(e) => setSchoolConfig((prev) => ({ ...prev, sekolah: e.target.value }))}
+                      placeholder="Contoh: SMK THIBBIL QULUB ASSIMBANI"
+                      className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-[#2E7D32]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-gray-700 mb-1">Subjudul / NPSN / Kompetensi</label>
+                    <input
+                      type="text"
+                      value={schoolConfig.subjudul}
+                      onChange={(e) => setSchoolConfig((prev) => ({ ...prev, subjudul: e.target.value }))}
+                      placeholder="Contoh: Program Keahlian & Kompetensi • NPSN: -"
+                      className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-[#2E7D32]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-gray-700 mb-1">Alamat & Kontak Kop Surat</label>
+                    <input
+                      type="text"
+                      value={schoolConfig.alamat}
+                      onChange={(e) => setSchoolConfig((prev) => ({ ...prev, alamat: e.target.value }))}
+                      placeholder="Contoh: Jl. Raya Simbani No. 01, Pasuruan"
+                      className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-[#2E7D32]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-gray-700 mb-1">Kota Tanda Tangan</label>
+                    <input
+                      type="text"
+                      value={schoolConfig.kota}
+                      onChange={(e) => setSchoolConfig((prev) => ({ ...prev, kota: e.target.value }))}
+                      placeholder="Contoh: Pasuruan"
+                      className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-[#2E7D32]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-gray-700 mb-1">Jabatan Penandatangan</label>
+                    <input
+                      type="text"
+                      value={schoolConfig.jabatanPenandatangan}
+                      onChange={(e) =>
+                        setSchoolConfig((prev) => ({ ...prev, jabatanPenandatangan: e.target.value }))
+                      }
+                      placeholder="Waka Kesiswaan / Kepala Sekolah"
+                      className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-[#2E7D32]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-gray-700 mb-1">
+                      Nama Waka Kesiswaan / Kepala Sekolah (Beserta Gelar)
+                    </label>
+                    <input
+                      type="text"
+                      value={schoolConfig.kepalaSekolah}
+                      onChange={(e) => setSchoolConfig((prev) => ({ ...prev, kepalaSekolah: e.target.value }))}
+                      placeholder="Ketik nama & gelar penandatangan (kosongkan jika ingin diisi manual setelah cetak)"
+                      className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-[#2E7D32]"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="block font-semibold text-gray-700 mb-1">Tahun Ajaran Aktif</label>
+                      <input
+                        type="text"
+                        value={schoolConfig.tahunAjaranAktif ?? '2025/2026'}
+                        onChange={(e) =>
+                          setSchoolConfig((prev) => ({ ...prev, tahunAjaranAktif: e.target.value }))
+                        }
+                        placeholder="2025/2026"
+                        className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-[#2E7D32]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold text-gray-700 mb-1">Semester Aktif</label>
+                      <select
+                        value={schoolConfig.semesterAktif ?? 'Genap'}
+                        onChange={(e) =>
+                          setSchoolConfig((prev) => ({
+                            ...prev,
+                            semesterAktif: e.target.value as 'Ganjil' | 'Genap',
+                          }))
+                        }
+                        className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-[#2E7D32]"
+                      >
+                        <option value="Ganjil">Ganjil</option>
+                        <option value="Genap">Genap</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="md:col-span-2 flex justify-end">
+                    <button
+                      type="submit"
+                      disabled={savingSchoolConfig || !isAdmin}
+                      className="px-4 py-2 bg-[#2E7D32] hover:bg-[#1B5E20] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 disabled:bg-gray-300 shadow-xs transition-colors"
+                    >
+                      <Save className="w-3.5 h-3.5" />
+                      <span>{savingSchoolConfig ? 'Menyimpan...' : 'Simpan Profil & Penandatangan'}</span>
+                    </button>
+                  </div>
+                </form>
+              </section>
+
               {/* Kelas */}
               <section className="bg-white rounded-2xl border border-green-100 shadow-sm p-4 space-y-3">
                 <h2 className="text-sm font-bold flex items-center gap-2">
@@ -816,7 +1019,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   <input
                     value={newKelas}
                     onChange={(e) => setNewKelas(e.target.value)}
-                    placeholder="Contoh: XI Farmasi A"
+                    placeholder="Contoh: X A / XI IPA 1"
                     className="flex-1 px-3 py-2 text-xs bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-[#2E7D32]"
                   />
                   <button
@@ -860,7 +1063,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   <input
                     value={newRayon}
                     onChange={(e) => setNewRayon(e.target.value)}
-                    placeholder="Contoh: Siti Aisyah 1"
+                    placeholder="Contoh: Rayon Al-Ghazali / Asrama 1"
                     className="flex-1 px-3 py-2 text-xs bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-[#2E7D32]"
                   />
                   <button
@@ -1094,13 +1297,27 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </div>
 
                 <div className="flex items-center gap-2">
+                  <select
+                    value={santriStatusFilter}
+                    onChange={(e) => setSantriStatusFilter(e.target.value as 'aktif' | 'lulus' | 'semua')}
+                    className="bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs outline-none font-semibold text-gray-700"
+                  >
+                    <option value="aktif">
+                      Santri Aktif ({santri.filter((s) => s.statusSiswa !== 'lulus' && s.statusSiswa !== 'arsip').length})
+                    </option>
+                    <option value="lulus">
+                      Lulus / Alumni ({santri.filter((s) => s.statusSiswa === 'lulus' || s.statusSiswa === 'arsip').length})
+                    </option>
+                    <option value="semua">Semua ({santri.length})</option>
+                  </select>
+
                   <Filter className="w-3.5 h-3.5 text-gray-400 shrink-0" />
                   <select
                     value={santriKelasFilter}
                     onChange={(e) => setSantriKelasFilter(e.target.value)}
                     className="bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs outline-none font-medium"
                   >
-                    <option value="semua">Semua Kelas ({santri.length})</option>
+                    <option value="semua">Semua Kelas</option>
                     {Array.from(new Set([...kelas.map((k) => k.nama), ...santri.map((s) => s.kelas)]))
                       .filter(Boolean)
                       .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
@@ -1128,17 +1345,45 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   <tbody className="divide-y divide-gray-100">
                     {santri
                       .filter((row) => {
+                        const isArchived = row.statusSiswa === 'lulus' || row.statusSiswa === 'arsip';
+                        const matchStatus =
+                          santriStatusFilter === 'semua'
+                            ? true
+                            : santriStatusFilter === 'lulus'
+                              ? isArchived
+                              : !isArchived;
                         const matchSearch =
                           !santriSearch ||
                           row.name.toLowerCase().includes(santriSearch.toLowerCase()) ||
                           row.nisn.toLowerCase().includes(santriSearch.toLowerCase());
                         const matchKelas =
                           santriKelasFilter === 'semua' || row.kelas === santriKelasFilter;
-                        return matchSearch && matchKelas;
+                        return matchStatus && matchSearch && matchKelas;
                       })
-                      .map((row) => (
+                      .map((row) => {
+                        const isArchived = row.statusSiswa === 'lulus' || row.statusSiswa === 'arsip';
+                        return (
                         <tr key={row.id} className="hover:bg-gray-50/80">
-                          <td className="p-2.5 font-semibold text-gray-900">{row.name}</td>
+                          <td className="p-2.5 font-semibold text-gray-900">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span>{row.name}</span>
+                              <span
+                                className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${
+                                  row.gender === 'P'
+                                    ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                    : 'bg-blue-50 text-blue-700 border-blue-200'
+                                }`}
+                                title={row.gender === 'P' ? 'Putri (Perempuan)' : 'Putra (Laki-laki)'}
+                              >
+                                {row.gender === 'P' ? 'Putri' : 'Putra'}
+                              </span>
+                              {isArchived && (
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                                  Lulus {row.tahunLulus || ''}
+                                </span>
+                              )}
+                            </div>
+                          </td>
                           <td className="p-2.5 text-gray-600 font-mono">{row.nisn}</td>
                           <td className="p-2.5">
                             <span className="px-2 py-0.5 rounded-md bg-green-50 text-green-800 font-semibold border border-green-200">
@@ -1151,6 +1396,34 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                           </td>
                           <td className="p-2.5 text-right">
                             <div className="flex items-center justify-end gap-1">
+                              {isArchived && isAdmin && (
+                                <button
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={async () => {
+                                    if (!profile) return;
+                                    setBusy(true);
+                                    try {
+                                      await aktifkanKembaliSantri({
+                                        studentId: row.id,
+                                        studentName: row.name,
+                                        tahunAjaranAktif: schoolConfig.tahunAjaranAktif || '2025/2026',
+                                        aktor: { uid: profile.uid, email: profile.email, role: profile.role },
+                                      });
+                                      setNotice(`Santri "${row.name}" diaktifkan kembali.`);
+                                    } catch (err) {
+                                      setError('Gagal mengaktifkan santri: ' + (err instanceof Error ? err.message : String(err)));
+                                    } finally {
+                                      setBusy(false);
+                                    }
+                                  }}
+                                  className="px-2 py-1 rounded-lg bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200 text-[11px] font-semibold flex items-center gap-1"
+                                  title="Aktifkan kembali santri ini"
+                                >
+                                  <RotateCcw className="w-3 h-3" />
+                                  <span>Aktifkan</span>
+                                </button>
+                              )}
                               <button
                                 type="button"
                                 onClick={() => handleQuickCreateUserForStudent(row, 'siswa')}
@@ -1202,6 +1475,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                     nisn: row.nisn,
                                     kelas: row.kelas,
                                     rayon: row.rayon,
+                                    gender: row.gender ?? 'L',
                                     points: row.points,
                                     waliName: row.waliName,
                                     waliPhone: row.waliPhone,
@@ -1233,7 +1507,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                             </div>
                           </td>
                         </tr>
-                      ))}
+                      );
+                      })}
                     {santri.length === 0 && (
                       <tr>
                         <td colSpan={6} className="p-3 text-gray-400">
@@ -1371,7 +1646,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       autoComplete="new-password"
                       value={userForm.password}
                       onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
-                      placeholder={`Minimal ${MIN_PASSWORD_LENGTH} karakter (contoh: BkpDigital123)`}
+                      placeholder={`Minimal ${MIN_PASSWORD_LENGTH} karakter (contoh: JejakDigital123)`}
                       className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs outline-none focus:border-[#2E7D32]"
                     />
                   </div>
@@ -1458,7 +1733,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         list="daftar-rayon"
                         value={rayonLink}
                         onChange={(e) => setRayonLink(e.target.value)}
-                        placeholder="Pilih atau ketik nama rayon (contoh: Rayon Siti Aisyah 1)"
+                        placeholder="Pilih atau ketik nama rayon dari Master Data"
                         className="w-full rounded-xl border border-purple-200 bg-white px-3 py-2 text-xs outline-none focus:border-[#2E7D32]"
                       />
                       <datalist id="daftar-rayon">
@@ -1747,6 +2022,27 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
           )}
 
+          {tab === 'tahun_ajaran' && (
+            <TutupTahunAjaranPanel
+              profile={profile}
+              isAdmin={isAdmin}
+              students={santri}
+              masterKelas={kelas.map((k) => k.nama)}
+              profiles={pengguna.map((p) => ({
+                id: p.id,
+                role: p.role,
+                studentId: p.studentId,
+                active: p.active,
+              }))}
+              schoolConfig={schoolConfig}
+              onSuccessNotice={(msg) => {
+                setError(null);
+                setNotice(msg);
+              }}
+              onErrorNotice={(msg) => setError(msg || null)}
+            />
+          )}
+
           {tab === 'audit' && (
             <section className="bg-white rounded-2xl border border-green-100 shadow-sm p-4 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1758,7 +2054,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   onChange={(e) => setAuditFilter(e.target.value)}
                   className="px-2 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-xl outline-none"
                 >
-                  {['semua', 'prestasi_submit', 'prestasi_verify', 'prestasi_reject', 'poin_create', 'jurnal_save', 'ttd_ortu', 'student_create', 'master_create', 'master_delete'].map((a) => (
+                  {['semua', 'prestasi_submit', 'prestasi_verify', 'prestasi_reject', 'poin_create', 'jurnal_save', 'ttd_ortu', 'student_create', 'tutup_tahun_ajaran', 'siswa_aktifkan_kembali', 'master_create', 'master_delete'].map((a) => (
                     <option key={a} value={a}>
                       {a === 'semua' ? 'Semua aksi' : a}
                     </option>

@@ -36,7 +36,7 @@ export const LOCAL_ACCOUNTS: LocalAccount[] = [
     description: 'Master data dan audit log',
     role: 'admin',
     email: 'admin@lokal.test',
-    fullName: 'Admin BKP',
+    fullName: 'Admin Jejak',
   },
   {
     uid: 'lokal-guru',

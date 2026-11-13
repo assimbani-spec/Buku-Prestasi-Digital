@@ -2,7 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * Server produksi BKP Digital: menyajikan hasil build Vite dan endpoint health.
+ * Server produksi Jejak Digital: menyajikan hasil build Vite dan endpoint health.
  * Jalankan `npm run build` sebelum `npm start`.
  */
 
@@ -53,7 +53,7 @@ app.get('/api/health', (_req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'no-store');
   res.json({
     status: 'ok',
-    appName: 'BKP Digital: Sistem Buku Kejar Prestasi',
+    appName: 'Jejak Digital: Sistem Pembinaan Karakter & Prestasi Santri',
     school: 'SMK Thibbil Qulub Assimbani',
     version: APP_VERSION,
     uptimeSeconds: Math.round(process.uptime()),
@@ -99,12 +99,12 @@ app.get(/.*/, (_req: Request, res: Response) => {
   } else {
     res
       .status(503)
-      .send('BKP Digital: hasil build belum tersedia. Jalankan `npm run build` sebelum `npm start`.');
+      .send('Jejak Digital: hasil build belum tersedia. Jalankan `npm run build` sebelum `npm start`.');
   }
 });
 
 const server = app.listen(PORT, HOST, () => {
-  console.log(`BKP Digital berjalan di http://${HOST}:${PORT} (versi ${APP_VERSION})`);
+  console.log(`Jejak Digital berjalan di http://${HOST}:${PORT} (versi ${APP_VERSION})`);
 });
 
 function shutdown(signal: string): void {

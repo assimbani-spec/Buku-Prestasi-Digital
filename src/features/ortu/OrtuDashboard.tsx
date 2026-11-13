@@ -54,7 +54,7 @@ import {
 } from '../../lib/rbac';
 import { logAuditSafe, newAuditRef, buildAuditPayload } from '../../lib/audit';
 import { ajukanPrestasi, putuskanPrestasi } from '../../features/prestasi/prestasi';
-import { MemuatPanel, ModulBelumTersedia } from '../../components/StatusPanel';
+import { MemuatPanel } from '../../components/StatusPanel';
 import { initials, isoWeekNumber } from '../../lib/format';
 
 // Panel admin dan laporan (membawa recharts) hanya dimuat saat dibutuhkan,
@@ -63,6 +63,7 @@ const AdminPanel = lazy(() => import('../../components/AdminPanel'));
 const LaporanBulananOrtu = lazy(() => import('../../components/LaporanBulananOrtu'));
 import KalenderMenstruasi from '../../components/KalenderMenstruasi';
 import JadwalPelajaranView from '../../components/JadwalPelajaranView';
+import KesehatanUksPanel from '../../components/KesehatanUksPanel';
 import {
   BookOpen,
   Lock,
@@ -123,6 +124,7 @@ export default function OrtuDashboard({ app }: { app: AppModel }) {
     sessionUser,
     profile,
     role,
+    myChildIds,
     accountEmail,
     handleLogout,
     currentStudent,
@@ -130,9 +132,11 @@ export default function OrtuDashboard({ app }: { app: AppModel }) {
     targetPoin,
     progressPct,
     studentPoinLogs,
+    unifiedStudentLogs,
     lastKonsekuensi,
     clearSig,
-    saveSig
+    saveSig,
+    schoolConfig
   } = app;
 
   return (
@@ -143,6 +147,7 @@ export default function OrtuDashboard({ app }: { app: AppModel }) {
           greeting="Assalamu’alaikum, Bapak/Ibu"
           fullName={profile?.fullName || "Bapak/Ibu Wali"}
           subtitle={`Wali dari: ${currentStudent.name} (${currentStudent.kelas})`}
+          schoolName={schoolConfig.sekolah}
           poin={currentStudent.points}
           onLogout={handleLogout}
         />
@@ -202,7 +207,7 @@ export default function OrtuDashboard({ app }: { app: AppModel }) {
                     <p className="mt-0.5 text-xs text-muted">
                       {ttdSavedUrl
                         ? 'Tanda tangan tersimpan pada sesi ini.'
-                        : 'Buku BKP pekan ini belum ditandatangani.'}
+                        : 'Buku Jejak pekan ini belum ditandatangani.'}
                     </p>
                   </div>
                   <button
@@ -228,16 +233,19 @@ export default function OrtuDashboard({ app }: { app: AppModel }) {
                   </button>
                 </div>
 
-                {studentPoinLogs.length === 0 ? (
+                {unifiedStudentLogs.length === 0 ? (
                   <p className="px-4 py-4 text-xs text-muted">
-                    Belum ada catatan poin dari guru atau pembimbing rayon.
+                    Belum ada catatan poin dari Jejak Harian, prestasi, maupun guru/pembimbing rayon.
                   </p>
                 ) : (
                   <ul className="divide-y divide-line">
-                    {studentPoinLogs.slice(0, 4).map((log) => (
+                    {unifiedStudentLogs.slice(0, 5).map((log) => (
                       <li key={log.id} className="flex items-start justify-between gap-3 px-4 py-3">
                         <div>
                           <p className="text-xs font-semibold text-ink">
+                            <span className="mr-1.5 rounded bg-paper px-1.5 py-0.5 text-[10px] font-bold text-brand-800 border border-line">
+                              {log.sumberLabel}
+                            </span>
                             <span className="mr-1.5 rounded bg-paper px-1.5 py-0.5 text-xs font-bold text-muted">
                               {log.kode}
                             </span>
@@ -304,21 +312,26 @@ export default function OrtuDashboard({ app }: { app: AppModel }) {
                 studentKelas={currentStudent.kelas}
                 studentRayon={currentStudent.rayon}
                 currentPoints={currentStudent.points}
-                poinLogs={studentPoinLogs}
+                poinLogs={unifiedStudentLogs}
               />
             </Suspense>
           )}
 
           {/* TAB ORTU: BORANG KESEHATAN */}
           {ortuTab === 'kesehatan' && (
-            <ModulBelumTersedia judul="Borang kesehatan ananda" />
+            <KesehatanUksPanel
+              student={currentStudent as StudentRecord}
+              userRole={role}
+              myChildIds={myChildIds}
+              poinLogs={studentPoinLogs}
+            />
           )}
 
           {/* TAB ORTU: TTD DIGITAL */}
           {ortuTab === 'ttd' && (
             <div className="space-y-4">
               <div className="bg-white rounded-2xl p-4 shadow-sm border border-green-100">
-                <h3 className="text-sm font-bold text-[#1B5E20] mb-1">Pengesahan Buku BKP Pekanan</h3>
+                <h3 className="text-sm font-bold text-[#1B5E20] mb-1">Pengesahan Buku Jejak Pekanan</h3>
                 <p className="text-xs text-gray-600">
                   Goreskan tanda tangan digital di bawah sebagai persetujuan dan pengawasan buku pembiasaan ananda.
                 </p>
@@ -379,7 +392,7 @@ export default function OrtuDashboard({ app }: { app: AppModel }) {
                   <h4 className="text-xs font-bold text-gray-700 mb-2">Pratinjau Tanda Tangan Tersimpan:</h4>
                   <img src={ttdSavedUrl} alt="TTD Ortu" className="mx-auto max-h-24 border rounded-xl bg-gray-50 p-2" />
                   <span className="inline-block mt-2 text-xs text-green-700 font-bold bg-green-50 px-3 py-1 rounded-full">
-                    Status: Sah & Tercatat di Server BKP
+                    Status: Sah & Tercatat di Server Jejak
                   </span>
                 </div>
               )}

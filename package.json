@@ -1,5 +1,5 @@
 {
-  "name": "bkp-digital",
+  "name": "jejak-digital",
   "private": true,
   "version": "1.0.0",
   "type": "module",
@@ -17,7 +17,9 @@
     "test:auth": "VITE_DATA_BACKEND=local tsx tests/local-auth.test.ts",
     "test:prestasi": "VITE_DATA_BACKEND=local tsx tests/prestasi.test.ts",
     "test:siswa": "VITE_DATA_BACKEND=local tsx tests/siswa.test.ts",
-    "test:rules": "firebase emulators:exec --only firestore --project demo-bkp \"tsx tests/firestore-rules.test.mjs\""
+    "test:rekap": "VITE_DATA_BACKEND=local tsx tests/poin-history.test.ts",
+    "test:rules": "firebase emulators:exec --only firestore --project demo-jejak \"tsx tests/firestore-rules.test.mjs\"",
+    "test:kenaikan": "VITE_DATA_BACKEND=local tsx tests/kenaikan-kelas.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

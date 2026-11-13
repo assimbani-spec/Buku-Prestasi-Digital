@@ -457,7 +457,7 @@ export default function ImportSiswaModal({
                   </span>
                 </label>
                 <p className="text-[11px] text-gray-500 pl-6 leading-relaxed">
-                  Contoh: Jika ada santri di kelas &ldquo;X Farmasi B&rdquo; dan kelas tersebut belum dibuat di panel admin, sistem akan otomatis menambahkannya ke master kelas.
+                  Contoh: Jika ada santri di kelas &ldquo;X A&rdquo; dan kelas tersebut belum dibuat di panel admin, sistem akan otomatis menambahkannya ke master kelas.
                 </p>
               </div>
 

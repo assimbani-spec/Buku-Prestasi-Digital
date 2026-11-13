@@ -24,7 +24,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo): void {
-    console.error('BKP Digital gagal menampilkan halaman', error, info.componentStack);
+    console.error('Jejak Digital gagal menampilkan halaman', error, info.componentStack);
   }
 
   render() {

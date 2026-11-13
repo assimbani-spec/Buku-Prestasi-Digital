@@ -37,6 +37,9 @@
         "waliEmail": { "type": "string", "maxLength": 100 },
         "studentEmail": { "type": "string", "maxLength": 100 },
         "lastJournalDate": { "type": "string", "maxLength": 20 },
+        "statusSiswa": { "type": "string", "enum": ["aktif", "lulus", "arsip"] },
+        "tahunAjaran": { "type": "string", "maxLength": 20 },
+        "tahunLulus": { "type": "string", "maxLength": 20 },
         "dibuat_oleh": { "type": "string", "maxLength": 128 }
       },
       "required": ["name", "nisn", "kelas", "rayon"]
@@ -84,7 +87,7 @@
     },
     "PoinLog": {
       "title": "PoinLog",
-      "description": "Catatan apresiasi dan konsekuensi poin karakter BKP",
+      "description": "Catatan apresiasi dan konsekuensi poin karakter Jejak",
       "type": "object",
       "properties": {
         "siswa_id": { "type": "string", "maxLength": 128 },
@@ -209,6 +212,58 @@
         "catatan": { "type": "string", "maxLength": 300 }
       },
       "required": ["kelas", "hari", "jam_mulai", "jam_selesai", "mata_pelajaran"]
+    },
+    "PengaturanSekolah": {
+      "title": "PengaturanSekolah",
+      "description": "Profil sekolah, kop surat, dan nama penandatangan (Waka Kesiswaan / Kepala Sekolah)",
+      "type": "object",
+      "properties": {
+        "yayasan": { "type": "string", "maxLength": 150 },
+        "sekolah": { "type": "string", "maxLength": 150 },
+        "subjudul": { "type": "string", "maxLength": 200 },
+        "alamat": { "type": "string", "maxLength": 250 },
+        "kota": { "type": "string", "maxLength": 80 },
+        "jabatanPenandatangan": { "type": "string", "maxLength": 120 },
+        "kepalaSekolah": { "type": "string", "maxLength": 120 },
+        "tahunAjaranAktif": { "type": "string", "maxLength": 20 },
+        "semesterAktif": { "type": "string", "enum": ["Ganjil", "Genap"] }
+      },
+      "required": ["sekolah"]
+    },
+    "ArsipTahunAjaran": {
+      "title": "ArsipTahunAjaran",
+      "description": "Ringkasan snapshot tutup tahun ajaran & kenaikan kelas",
+      "type": "object",
+      "properties": {
+        "tahunAjaranLama": { "type": "string", "maxLength": 20 },
+        "tahunAjaranBaru": { "type": "string", "maxLength": 20 },
+        "modeResetPoin": { "type": "string", "enum": ["reset_default", "pertahankan"] },
+        "poinDefaultBaru": { "type": "number" },
+        "catatan": { "type": "string", "maxLength": 500 },
+        "ringkasan": { "type": "object" },
+        "dibuatOlehUid": { "type": "string", "maxLength": 128 },
+        "dibuatOlehEmail": { "type": "string", "maxLength": 100 }
+      },
+      "required": ["tahunAjaranLama", "tahunAjaranBaru", "dibuatOlehUid"]
+    },
+    "ArsipSantriTahunan": {
+      "title": "ArsipSantriTahunan",
+      "description": "Snapshot nilai poin akhir & status kenaikan kelas per santri per tahun ajaran",
+      "type": "object",
+      "properties": {
+        "arsipId": { "type": "string", "maxLength": 128 },
+        "tahunAjaran": { "type": "string", "maxLength": 20 },
+        "studentId": { "type": "string", "maxLength": 128 },
+        "nisn": { "type": "string", "maxLength": 30 },
+        "name": { "type": "string", "maxLength": 100 },
+        "kelasLama": { "type": "string", "maxLength": 50 },
+        "kelasBaru": { "type": "string", "maxLength": 50 },
+        "rayon": { "type": "string", "maxLength": 50 },
+        "statusAkhir": { "type": "string", "enum": ["naik_kelas", "lulus", "tetap"] },
+        "poinAkhir": { "type": "number" },
+        "poinBaru": { "type": "number" }
+      },
+      "required": ["arsipId", "tahunAjaran", "studentId", "statusAkhir"]
     }
   },
   "firestore": {
@@ -263,6 +318,18 @@
     "/notifikasi/{notifId}": {
       "schema": { "$ref": "#/entities/Notifikasi" },
       "description": "Dokumen notifikasi sistem"
+    },
+    "/pengaturan_sekolah/{settingId}": {
+      "schema": { "$ref": "#/entities/PengaturanSekolah" },
+      "description": "Pengaturan profil sekolah, kop surat, dan penandatangan"
+    },
+    "/arsip_tahun_ajaran/{arsipId}": {
+      "schema": { "$ref": "#/entities/ArsipTahunAjaran" },
+      "description": "Arsip rekap tutup tahun ajaran & kenaikan kelas"
+    },
+    "/arsip_santri_tahunan/{docId}": {
+      "schema": { "$ref": "#/entities/ArsipSantriTahunan" },
+      "description": "Snapshot riwayat poin akhir & kenaikan kelas per santri per tahun ajaran"
     }
   }
 }

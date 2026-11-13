@@ -9,7 +9,8 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { Calendar, FileText, Printer } from 'lucide-react';
+import { Calendar, FileText, Info, Printer } from 'lucide-react';
+import type { SumberPoin } from '../features/rekap/poinHistory';
 
 export interface LaporanPoinRow {
   id: string;
@@ -19,6 +20,8 @@ export interface LaporanPoinRow {
   poin: number;
   createdMs: number;
   time: string;
+  sumber?: SumberPoin;
+  sumberLabel?: string;
 }
 
 interface LaporanBulananOrtuProps {
@@ -42,13 +45,17 @@ const monthLabel = (key: string) => {
   });
 };
 
+const sumberBadgeClass = (sumber?: SumberPoin) => {
+  if (sumber === 'jejak_harian') return 'bg-sky-50 text-sky-800 border border-sky-200';
+  if (sumber === 'prestasi') return 'bg-amber-50 text-amber-800 border border-amber-200';
+  return 'bg-emerald-50 text-emerald-800 border border-emerald-200';
+};
+
 /**
  * Laporan bulanan wali santri.
  *
- * Seluruh angka dihitung dari koleksi poin_log milik santri ini. Tidak ada
- * rata-rata kelas, predikat, atau konsistensi pembiasaan karena data itu
- * tidak tersimpan di Firestore. Bila belum ada catatan, yang tampil adalah
- * keadaan kosong, bukan angka contoh.
+ * Seluruh angka dihitung dari gabungan Jejak Harian (pembiasaan_harian),
+ * Prestasi terverifikasi (prestasi), dan catatan poin Guru/Pembimbing (poin_log).
  */
 export const LaporanBulananOrtu: React.FC<LaporanBulananOrtuProps> = ({
   studentName,
@@ -73,13 +80,28 @@ export const LaporanBulananOrtu: React.FC<LaporanBulananOrtuProps> = ({
   );
 
   const totals = useMemo(() => {
-    const apresiasi = rows
-      .filter((r) => r.tipe === 'apresiasi')
-      .reduce((acc, r) => acc + r.poin, 0);
-    const konsekuensi = rows
-      .filter((r) => r.tipe === 'konsekuensi')
-      .reduce((acc, r) => acc + r.poin, 0);
-    return { apresiasi, konsekuensi, net: apresiasi - konsekuensi, jumlah: rows.length };
+    let jejakHarian = 0;
+    let prestasi = 0;
+    let guruApresiasi = 0;
+    let konsekuensi = 0;
+
+    rows.forEach((r) => {
+      if (r.tipe === 'konsekuensi') konsekuensi += r.poin;
+      else if (r.sumber === 'jejak_harian') jejakHarian += r.poin;
+      else if (r.sumber === 'prestasi') prestasi += r.poin;
+      else guruApresiasi += r.poin;
+    });
+
+    const apresiasi = jejakHarian + prestasi + guruApresiasi;
+    return {
+      jejakHarian,
+      prestasi,
+      guruApresiasi,
+      apresiasi,
+      konsekuensi,
+      net: apresiasi - konsekuensi,
+      jumlah: rows.length,
+    };
   }, [rows]);
 
   // Satu batang per pekan dalam bulan terpilih, dihitung dari tanggal catatan.
@@ -135,6 +157,25 @@ export const LaporanBulananOrtu: React.FC<LaporanBulananOrtuProps> = ({
             <dd className="mt-0.5 text-lg font-bold text-ink tabular">{totals.jumlah}</dd>
           </div>
         </dl>
+
+        {rows.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-2 border-t border-line pt-3 text-xs">
+            <span className="rounded-control bg-sky-50 px-2.5 py-1 font-semibold text-sky-800 border border-sky-200">
+              Jejak Harian: +{totals.jejakHarian}
+            </span>
+            <span className="rounded-control bg-amber-50 px-2.5 py-1 font-semibold text-amber-800 border border-amber-200">
+              Prestasi: +{totals.prestasi}
+            </span>
+            <span className="rounded-control bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-800 border border-emerald-200">
+              Guru/BK: +{totals.guruApresiasi}
+            </span>
+          </div>
+        )}
+
+        <p className="mt-3 flex items-start gap-1.5 text-[11px] leading-relaxed text-muted">
+          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-brand-700" aria-hidden="true" />
+          Poin awal santri 1.000, bertambah dari Jejak Harian, Prestasi terverifikasi, dan Apresiasi/Konsekuensi Guru BK.
+        </p>
       </section>
 
       {months.length === 0 ? (
@@ -142,8 +183,8 @@ export const LaporanBulananOrtu: React.FC<LaporanBulananOrtuProps> = ({
           <Calendar className="mx-auto h-5 w-5 text-muted" aria-hidden="true" />
           <p className="mt-2 text-sm font-semibold text-ink">Belum ada catatan poin</p>
           <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-muted">
-            Laporan terbentuk otomatis setelah guru atau pembimbing rayon mencatat apresiasi atau
-            konsekuensi untuk ananda.
+            Laporan terbentuk otomatis setelah ananda mengisi Jejak Harian, mendapat verifikasi
+            prestasi, atau menerima catatan poin dari guru/pembimbing rayon.
           </p>
         </section>
       ) : (
@@ -196,7 +237,7 @@ export const LaporanBulananOrtu: React.FC<LaporanBulananOrtuProps> = ({
           <section className="overflow-hidden rounded-card border border-line bg-surface">
             <h2 className="flex items-center gap-1.5 border-b border-line px-4 py-3 text-sm font-semibold text-ink">
               <FileText className="h-4 w-4 text-muted" aria-hidden="true" />
-              Rincian catatan
+              Rincian riwayat mutasi poin
             </h2>
             {rows.length === 0 ? (
               <p className="px-4 py-4 text-xs text-muted">Tidak ada catatan pada bulan ini.</p>
@@ -205,12 +246,17 @@ export const LaporanBulananOrtu: React.FC<LaporanBulananOrtuProps> = ({
                 {rows.map((row) => (
                   <li key={row.id} className="flex items-start justify-between gap-3 px-4 py-3">
                     <div className="min-w-0">
-                      <p className="text-xs font-semibold text-ink">
-                        <span className="mr-1.5 rounded bg-paper px-1.5 py-0.5 text-xs font-bold text-muted">
+                      <div className="flex flex-wrap items-center gap-1.5 mb-0.5">
+                        {row.sumberLabel && (
+                          <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${sumberBadgeClass(row.sumber)}`}>
+                            {row.sumberLabel}
+                          </span>
+                        )}
+                        <span className="rounded bg-paper px-1.5 py-0.5 text-xs font-bold text-muted">
                           {row.kode}
                         </span>
-                        {row.deskripsi}
-                      </p>
+                      </div>
+                      <p className="text-xs font-semibold text-ink">{row.deskripsi}</p>
                       <p className="mt-0.5 text-xs text-muted">{row.time}</p>
                     </div>
                     <span

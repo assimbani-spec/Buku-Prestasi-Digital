@@ -4,7 +4,8 @@ import { Award, LogOut, ShieldCheck, User } from 'lucide-react';
 interface HeaderProps {
   greeting?: string;
   fullName: string;
-  subtitle?: string; // misal "Kelas: X Farmasi A • Rayon: Assimbani 1" atau "Wali dari: Muhammad Faiz"
+  subtitle?: string; // misal "Kelas: X A • Rayon: 1" atau "Wali dari: Muhammad Faiz"
+  schoolName?: string;
   poin?: number;
   roleBadge?: string;
   onLogout?: () => void;
@@ -15,6 +16,7 @@ export const Header: React.FC<HeaderProps> = ({
   greeting = 'Assalamu’alaikum,',
   fullName,
   subtitle,
+  schoolName = 'SMK Thibbil Qulub Assimbani',
   poin,
   roleBadge,
   onLogout,
@@ -28,7 +30,7 @@ export const Header: React.FC<HeaderProps> = ({
             <User className="h-5 w-5 text-brand-100" aria-hidden="true" />
           </div>
           <div>
-            <p className="text-xs font-medium text-brand-100">SMK Thibbil Qulub Assimbani</p>
+            <p className="text-xs font-medium text-brand-100">{schoolName}</p>
             <p className="max-w-[220px] truncate text-sm font-semibold text-white">{greeting}</p>
           </div>
         </div>

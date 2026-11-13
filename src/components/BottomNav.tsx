@@ -26,7 +26,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   const tabs: TabItem[] = role === 'siswa'
     ? [
         { id: 'home', label: 'Beranda', icon: Home },
-        { id: 'jurnal', label: 'Jurnal', icon: BookOpen },
+        { id: 'jurnal', label: 'Jejak', icon: BookOpen },
         { id: 'kesehatan', label: 'Kesehatan', icon: HeartPulse },
         { id: 'poin', label: 'Poin', icon: Award },
         { id: 'profil', label: 'Profil', icon: User },

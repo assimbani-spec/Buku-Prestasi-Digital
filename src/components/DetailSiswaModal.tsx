@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { X, Award, Phone, Mail, AlertTriangle } from 'lucide-react';
+import { X, Award, Phone, Mail, AlertTriangle, Printer } from 'lucide-react';
 import { StudentRecord } from '../lib/tipe';
 
 interface DetailSiswaModalProps {
@@ -7,6 +7,7 @@ interface DetailSiswaModalProps {
   isOpen: boolean;
   onClose: () => void;
   onInputPoin: (studentId: string) => void;
+  onCetakRekap?: (studentId: string) => void;
 }
 
 const tidakAda = <span className="font-normal text-muted">Belum diisi admin</span>;
@@ -16,6 +17,7 @@ export const DetailSiswaModal: React.FC<DetailSiswaModalProps> = ({
   isOpen,
   onClose,
   onInputPoin,
+  onCetakRekap,
 }) => {
   const closeRef = useRef<HTMLButtonElement>(null);
 
@@ -129,18 +131,31 @@ export const DetailSiswaModal: React.FC<DetailSiswaModalProps> = ({
             ditampilkan di sini.
           </p>
 
-          <div className="flex gap-2 pt-1">
+          <div className="flex flex-wrap gap-2 pt-1">
             <button
               type="button"
               onClick={() => {
                 onClose();
                 onInputPoin(student.id);
               }}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-control bg-brand-700 py-2.5 text-xs font-semibold text-white hover:bg-brand-800"
+              className="flex flex-1 min-w-[140px] items-center justify-center gap-1.5 rounded-control bg-brand-700 py-2.5 text-xs font-semibold text-white hover:bg-brand-800"
             >
               <Award className="h-4 w-4" aria-hidden="true" />
               Input poin karakter
             </button>
+            {onCetakRekap && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onCetakRekap(student.id);
+                }}
+                className="flex items-center justify-center gap-1.5 rounded-control border border-brand-700 bg-brand-50 px-3.5 py-2.5 text-xs font-semibold text-brand-900 hover:bg-brand-100"
+              >
+                <Printer className="h-4 w-4 text-brand-800" aria-hidden="true" />
+                Cetak Rekap
+              </button>
+            )}
             <button
               type="button"
               onClick={onClose}

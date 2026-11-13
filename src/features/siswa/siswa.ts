@@ -97,6 +97,9 @@ export async function tambahSiswa(
 
   const id = buatId();
   const gender: 'L' | 'P' = input.gender === 'P' ? 'P' : 'L';
+  const waliName = rapikan(input.waliName);
+  const waliPhone = rapikan(input.waliPhone);
+
   const student: StudentRecord = {
     id,
     name,
@@ -105,20 +108,32 @@ export async function tambahSiswa(
     rayon,
     gender,
     points: Math.round(poin),
-    waliName: rapikan(input.waliName) || undefined,
-    waliPhone: rapikan(input.waliPhone) || undefined,
-    waliEmail: waliEmail || undefined,
-    studentEmail: studentEmail || undefined,
+    ...(waliName ? { waliName } : {}),
+    ...(waliPhone ? { waliPhone } : {}),
+    ...(waliEmail ? { waliEmail } : {}),
+    ...(studentEmail ? { studentEmail } : {}),
     createdAt: new Date().toISOString(),
   };
 
-  const batch = writeBatch(db);
-  batch.set(doc(db, 'students', id), {
-    ...student,
+  const firestoreStudentPayload: Record<string, unknown> = {
+    id,
+    name,
+    nisn,
+    kelas,
+    rayon,
+    gender,
+    points: Math.round(poin),
+    ...(waliName ? { waliName } : {}),
+    ...(waliPhone ? { waliPhone } : {}),
+    ...(waliEmail ? { waliEmail } : {}),
+    ...(studentEmail ? { studentEmail } : {}),
     dibuat_oleh: aktor.uid,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
-  });
+  };
+
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'students', id), firestoreStudentPayload);
   // Kunci NISN ditulis dalam batch yang sama. Aturan Firestore mensyaratkan
   // indeks ini ada, sehingga NISN ganda tetap ditolak walau dua admin
   // menambahkan santri pada saat yang hampir bersamaan.

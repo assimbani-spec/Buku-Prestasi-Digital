@@ -54,7 +54,7 @@ import {
 } from '../../lib/rbac';
 import { logAuditSafe, newAuditRef, buildAuditPayload } from '../../lib/audit';
 import { ajukanPrestasi, putuskanPrestasi } from '../../features/prestasi/prestasi';
-import { MemuatPanel, ModulBelumTersedia } from '../../components/StatusPanel';
+import { MemuatPanel } from '../../components/StatusPanel';
 import { initials, isoWeekNumber } from '../../lib/format';
 
 // Panel admin dan laporan (membawa recharts) hanya dimuat saat dibutuhkan,
@@ -63,10 +63,16 @@ const AdminPanel = lazy(() => import('../../components/AdminPanel'));
 const LaporanBulananOrtu = lazy(() => import('../../components/LaporanBulananOrtu'));
 import KalenderMenstruasi from '../../components/KalenderMenstruasi';
 import JadwalPelajaranView from '../../components/JadwalPelajaranView';
+import RekapBulananGuru from '../../components/RekapBulananGuru';
+import KesehatanUksPanel from '../../components/KesehatanUksPanel';
 import {
   BookOpen,
   Lock,
   Mail,
+  Printer,
+  FileSpreadsheet,
+  ChevronLeft,
+  ChevronRight,
   Eye,
   EyeOff,
   ArrowRight,
@@ -106,13 +112,16 @@ import {
   CheckCheck,
   Info,
   TrendingUp,
-  BarChart3
+  BarChart3,
+  ArrowLeft,
+  Undo2
 } from 'lucide-react';
 import type { AppModel } from '../../app/useAppModel';
 
 export default function GuruDashboard({ app }: { app: AppModel }) {
   const {
     email,
+    setCurrentRoute,
     guruTab,
     setGuruTab,
     guruTahunFilter,
@@ -140,6 +149,7 @@ export default function GuruDashboard({ app }: { app: AppModel }) {
     staffKelasFilter,
     setStaffKelasFilter,
     students,
+    poinLogs,
     showTambahSiswa,
     setShowTambahSiswa,
     sessionUser,
@@ -150,11 +160,25 @@ export default function GuruDashboard({ app }: { app: AppModel }) {
     daftarKelasSemua,
     effectiveKodes,
     pendingPrestasi,
+    nonRutinSubmissions,
+    pendingNonRutin,
+    verifyingNonRutinId,
+    koreksiLoadingId,
     apresiasiHariIni,
     konsekuensiMingguIni,
     handleGuruSubmit,
-    handleVerifyPrestasi
+    handleVerifyPrestasi,
+    handleVerifyNonRutin,
+    handleKoreksiPoin,
+    schoolConfig
   } = app;
+
+  const [inputPoinKelasFilter, setInputPoinKelasFilter] = useState<string>('semua');
+  const [staffRayonFilter, setStaffRayonFilter] = useState<string>('semua');
+  const [staffPage, setStaffPage] = useState<number>(1);
+  const [nrCatatan, setNrCatatan] = useState<Record<string, string>>({});
+  const [showAllRecentPoin, setShowAllRecentPoin] = useState<boolean>(false);
+  const PAGE_SIZE = 24;
 
   return (
     <div className="flex-1 flex flex-col md:flex-row">
@@ -168,7 +192,7 @@ export default function GuruDashboard({ app }: { app: AppModel }) {
             </div>
             <div>
               <h2 className="text-sm font-bold leading-tight">Panel {roleLabel(role)}</h2>
-              <span className="text-xs text-green-300">SMK Thibbil Qulub</span>
+              <span className="text-xs text-green-300">{schoolConfig.sekolah || 'SMK Thibbil Qulub'}</span>
               {role === 'pembimbing_rayon' && (
                 <span className="block text-xs text-green-400 mt-0.5">
                   Rayon: {myRayonId || 'belum diatur'}
@@ -176,6 +200,17 @@ export default function GuruDashboard({ app }: { app: AppModel }) {
               )}
             </div>
           </div>
+
+          {role === 'admin' && (
+            <button
+              type="button"
+              onClick={() => setCurrentRoute('admin')}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-amber-950 text-xs font-extrabold shadow-sm transition-all"
+            >
+              <ArrowLeft className="w-4 h-4 shrink-0" />
+              <span>Kembali ke Panel Admin</span>
+            </button>
+          )}
 
           <nav className="space-y-1.5 text-xs font-medium">
             <button
@@ -205,12 +240,22 @@ export default function GuruDashboard({ app }: { app: AppModel }) {
               }`}
             >
               <UserCheck className="w-4 h-4" />
-              <span>Verifikasi Prestasi</span>
-              {pendingPrestasi.length > 0 && (
+              <span>Verifikasi & Non-Rutin</span>
+              {(pendingPrestasi.length + pendingNonRutin.length) > 0 && (
                 <span className="ml-auto bg-amber-400 text-amber-950 text-xs font-black px-1.5 py-0.5 rounded-full">
-                  {pendingPrestasi.length}
+                  {pendingPrestasi.length + pendingNonRutin.length}
                 </span>
               )}
+            </button>
+
+            <button
+              onClick={() => setGuruTab('rekap')}
+              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl transition-all ${
+                guruTab === 'rekap' ? 'bg-[#2E7D32] text-white font-bold shadow-sm' : 'text-green-200 hover:bg-green-800'
+              }`}
+            >
+              <Printer className="w-4 h-4" />
+              <span>Rekap & Cetak Bulanan</span>
             </button>
 
             <button
@@ -275,7 +320,7 @@ export default function GuruDashboard({ app }: { app: AppModel }) {
         {guruTab === 'dashboard' && (
           <div className="space-y-6 max-w-5xl mx-auto">
             <div>
-              <h1 className="text-xl font-bold text-gray-900">Ringkasan Karakter Santri BKP</h1>
+              <h1 className="text-xl font-bold text-gray-900">Ringkasan Karakter Santri Jejak</h1>
               <p className="text-xs text-gray-500">Pemantauan jurnal harian, kedisiplinan, dan kesehatan siswa</p>
             </div>
 
@@ -400,23 +445,49 @@ export default function GuruDashboard({ app }: { app: AppModel }) {
 
             <div className="bg-white rounded-2xl p-6 shadow-sm border border-green-100">
               <form onSubmit={handleGuruSubmit} className="space-y-4 text-xs">
-                <div>
-                  <label className="block font-semibold text-gray-700 mb-1.5">Pilih Santri Target</label>
-                  <select
-                    value={selectedStudentId}
-                    onChange={(e) => setSelectedStudentId(e.target.value)}
-                    className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-[#2E7D32]"
-                  >
-                    {students.map((st) => (
-                      <option key={st.id} value={st.id}>
-                        {st.name} ({st.kelas} - {st.rayon}) • Total Saat Ini: {st.points} Pts
-                      </option>
-                    ))}
-                  </select>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div>
+                    <label className="block font-semibold text-gray-700 mb-1.5">1. Filter Kelas</label>
+                    <select
+                      value={inputPoinKelasFilter}
+                      onChange={(e) => {
+                        const newKelas = e.target.value;
+                        setInputPoinKelasFilter(newKelas);
+                        const first = students.find((s) => newKelas === 'semua' || s.kelas === newKelas);
+                        if (first) setSelectedStudentId(first.id);
+                      }}
+                      className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-[#2E7D32]"
+                    >
+                      <option value="semua">Semua Rombel ({students.length})</option>
+                      {Array.from(new Set(students.map((s) => s.kelas).filter(Boolean)))
+                        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+                        .map((k) => (
+                          <option key={k} value={k}>
+                            Kelas {k}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="block font-semibold text-gray-700 mb-1.5">2. Pilih Santri</label>
+                    <select
+                      value={selectedStudentId}
+                      onChange={(e) => setSelectedStudentId(e.target.value)}
+                      className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-[#2E7D32]"
+                    >
+                      {students
+                        .filter((st) => inputPoinKelasFilter === 'semua' || st.kelas === inputPoinKelasFilter)
+                        .map((st) => (
+                          <option key={st.id} value={st.id}>
+                            {st.name} ({st.kelas} - {st.rayon}) • Total: {st.points} Pts
+                          </option>
+                        ))}
+                    </select>
+                  </div>
                 </div>
 
                 <div>
-                  <label className="block font-semibold text-gray-700 mb-1.5">Pilih Kode Tindakan BKP</label>
+                  <label className="block font-semibold text-gray-700 mb-1.5">Pilih Kode Tindakan Jejak</label>
                   <select
                     value={selectedKode}
                     onChange={(e) => {
@@ -466,6 +537,94 @@ export default function GuruDashboard({ app }: { app: AppModel }) {
                 </button>
               </form>
             </div>
+
+            {/* Riwayat Input Poin Terbaru & Koreksi Salah Input */}
+            {(() => {
+              const filteredLogs = showAllRecentPoin || !selectedStudentId
+                ? poinLogs
+                : poinLogs.filter((l) => l.studentId === selectedStudentId);
+              const displayedLogs = filteredLogs.slice(0, 15);
+              return (
+                <div className="bg-white rounded-2xl p-5 shadow-sm border border-green-100 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 pb-3">
+                    <div>
+                      <h2 className="text-sm font-bold text-gray-900">
+                        Riwayat Input Poin Terbaru & Koreksi
+                      </h2>
+                      <p className="text-xs text-gray-500">
+                        Jika terjadi kesalahan input poin, gunakan tombol Batalkan / Koreksi untuk membuat jurnal penyeimbang resmi (tercatat di audit log).
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowAllRecentPoin((v) => !v)}
+                      className="px-3 py-1.5 rounded-xl border border-gray-200 bg-gray-50 hover:bg-gray-100 text-xs font-semibold text-gray-700"
+                    >
+                      {showAllRecentPoin ? 'Filter: Santri Terpilih' : 'Tampilkan Semua Santri'}
+                    </button>
+                  </div>
+
+                  {displayedLogs.length === 0 ? (
+                    <p className="text-xs text-gray-400 py-2">
+                      Belum ada riwayat mutasi poin dari Guru/BK pada filter ini.
+                    </p>
+                  ) : (
+                    <div className="divide-y divide-gray-100 text-xs">
+                      {displayedLogs.map((log) => {
+                        const santri = students.find((s) => s.id === log.studentId);
+                        const isKoreksiEntry = log.kode === 'KOREKSI' || Boolean(log.koreksiDari);
+                        const alreadyCorrected = poinLogs.some((l) => l.koreksiDari === log.id);
+                        return (
+                          <div key={log.id} className="py-3 flex flex-wrap items-center justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-700 font-bold font-mono text-[10px]">
+                                  {log.kode}
+                                </span>
+                                <span className="font-bold text-gray-900">
+                                  {santri ? `${santri.name} (${santri.kelas})` : log.studentId}
+                                </span>
+                                <span className="text-gray-400">• {log.time}</span>
+                              </div>
+                              <p className="text-gray-700 mt-0.5">{log.deskripsi}</p>
+                            </div>
+                            <div className="flex items-center gap-2.5 shrink-0">
+                              <span
+                                className={`font-black tabular ${
+                                  log.tipe === 'apresiasi' ? 'text-emerald-700' : 'text-rose-700'
+                                }`}
+                              >
+                                {log.tipe === 'apresiasi' ? `+${log.poin}` : `-${log.poin}`} Pts
+                              </span>
+                              {alreadyCorrected ? (
+                                <span className="px-2.5 py-1 rounded-lg bg-gray-100 text-gray-500 font-semibold text-[11px]">
+                                  Sudah Dikoreksi
+                                </span>
+                              ) : isKoreksiEntry ? (
+                                <span className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 font-semibold text-[11px]">
+                                  Entri Koreksi
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  disabled={koreksiLoadingId === log.id || !santri}
+                                  onClick={() => handleKoreksiPoin(log)}
+                                  className="px-2.5 py-1.5 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 disabled:opacity-40 text-rose-700 font-bold text-[11px] flex items-center gap-1"
+                                  title="Buat entri penyeimbang untuk membatalkan poin salah input ini"
+                                >
+                                  <Undo2 className="w-3.5 h-3.5" />
+                                  <span>{koreksiLoadingId === log.id ? 'Memproses…' : 'Batalkan / Koreksi'}</span>
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -687,6 +846,162 @@ export default function GuruDashboard({ app }: { app: AppModel }) {
                   })}
               </div>
             )}
+
+            {/* Verifikasi Kegiatan Non-Rutin Santri (3 Mingguan / 9 Mingguan / Semester) */}
+            <div className="space-y-3 pt-4 border-t border-gray-200">
+              <div className="flex items-center justify-between px-1">
+                <div>
+                  <h2 className="text-sm font-bold text-gray-900 flex items-center gap-1.5">
+                    <ShieldCheck className="w-4 h-4 text-[#1B5E20]" />
+                    <span>Verifikasi Kegiatan Non-Rutin Santri</span>
+                  </h2>
+                  <p className="text-xs text-gray-500">
+                    Validasi isian kegiatan 3 mingguan, 9 mingguan, & semester dari santri sebelum poin dimutasikan ke saldo karakter.
+                  </p>
+                </div>
+                <span className="text-xs bg-amber-100 text-amber-900 px-2.5 py-0.5 rounded-full font-bold shrink-0">
+                  {pendingNonRutin.length} Menunggu
+                </span>
+              </div>
+
+              {pendingNonRutin.length === 0 ? (
+                <div className="bg-white rounded-2xl border border-green-100 p-4 text-xs text-gray-500">
+                  Tidak ada kiriman kegiatan Non-Rutin yang menunggu verifikasi saat ini.
+                </div>
+              ) : (
+                pendingNonRutin.map((sub) => {
+                  const santri = students.find((s) => s.id === sub.siswa_id);
+                  return (
+                    <div
+                      key={sub.id}
+                      className="bg-white rounded-2xl border border-emerald-200 shadow-sm p-4 space-y-3 text-xs"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                            <span className="px-2 py-0.5 rounded bg-emerald-50 text-[#1B5E20] font-bold border border-emerald-200 text-xs">
+                              Periode {sub.periode}
+                            </span>
+                            <span className="text-gray-500 font-medium">
+                              {sub.items.length} butir diisi
+                            </span>
+                          </div>
+                          <span className="font-bold text-gray-900 text-sm block">
+                            {sub.nama_siswa || santri?.name || sub.siswa_id}
+                          </span>
+                          <span className="text-gray-600 block">
+                            {sub.kelas || santri?.kelas || '-'} • Rayon {sub.rayon || santri?.rayon || '-'}
+                          </span>
+                        </div>
+                        <span
+                          className={`text-xs font-black px-2.5 py-1 rounded-lg shrink-0 ${
+                            sub.net_poin >= 0
+                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                              : 'bg-rose-100 text-rose-800 border border-rose-200'
+                          }`}
+                        >
+                          {sub.net_poin >= 0 ? `+${sub.net_poin}` : sub.net_poin} Pts
+                        </span>
+                      </div>
+
+                      <div className="bg-gray-50 rounded-xl border border-gray-200 p-3 space-y-1.5 max-h-48 overflow-y-auto">
+                        {sub.items.map((item, idx) => (
+                          <div key={`${sub.id}-${idx}`} className="flex items-start justify-between gap-2 pb-1.5 border-b last:border-b-0 border-gray-200/70">
+                            <div>
+                              <span className="font-semibold text-gray-800 block">{item.nama}</span>
+                              <span className="text-[11px] text-gray-500">
+                                Capaian: <strong className="text-gray-700">{item.status}</strong>
+                                {item.saksi ? ` • Saksi: ${item.saksi}` : ''}
+                                {item.detail ? ` • Target: ${item.detail}` : ''}
+                              </span>
+                            </div>
+                            <span
+                              className={`font-bold shrink-0 ${
+                                item.poin >= 0 ? 'text-emerald-700' : 'text-rose-700'
+                              }`}
+                            >
+                              {item.poin >= 0 ? `+${item.poin}` : item.poin}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div>
+                        <label className="block font-semibold text-gray-700 mb-1">Catatan Verifikasi (Opsional)</label>
+                        <input
+                          type="text"
+                          value={nrCatatan[sub.id] ?? ''}
+                          onChange={(e) => setNrCatatan({ ...nrCatatan, [sub.id]: e.target.value })}
+                          placeholder="Mis. sudah dicek sesuai bukti setoran / laporan wali rayon"
+                          className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-[#2E7D32]"
+                        />
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={verifyingNonRutinId === sub.id}
+                          onClick={() => handleVerifyNonRutin(sub, 'verified', nrCatatan[sub.id])}
+                          className="flex-1 min-w-[160px] py-2.5 bg-[#2E7D32] hover:bg-[#1B5E20] disabled:bg-gray-300 text-white font-bold rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition-all"
+                        >
+                          <CheckCircle2 className="w-4 h-4" />
+                          <span>{verifyingNonRutinId === sub.id ? 'Memproses…' : 'Setujui & Mutasikan Poin'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={verifyingNonRutinId === sub.id}
+                          onClick={() => handleVerifyNonRutin(sub, 'rejected', nrCatatan[sub.id])}
+                          className="px-4 py-2.5 bg-red-50 hover:bg-red-100 disabled:opacity-50 text-red-700 font-bold rounded-xl border border-red-200 flex items-center justify-center gap-1.5"
+                        >
+                          <AlertTriangle className="w-4 h-4" /> Tolak
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+
+              {nonRutinSubmissions.filter((s) => s.status !== 'pending').length > 0 && (
+                <div className="space-y-2 pt-2">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500 px-1">
+                    Riwayat Non-Rutin Diproses ({nonRutinSubmissions.filter((s) => s.status !== 'pending').length})
+                  </h3>
+                  {nonRutinSubmissions
+                    .filter((s) => s.status !== 'pending')
+                    .slice(0, 10)
+                    .map((sub) => {
+                      const santri = students.find((s) => s.id === sub.siswa_id);
+                      return (
+                        <div
+                          key={sub.id}
+                          className="bg-white rounded-xl border border-gray-200 p-3 text-xs flex items-start justify-between gap-2"
+                        >
+                          <div>
+                            <span className="font-semibold text-gray-900 block">
+                              {sub.nama_siswa || santri?.name || sub.siswa_id} ({sub.kelas || santri?.kelas || '-'}) — Periode {sub.periode}
+                            </span>
+                            <span className="text-gray-500 block">
+                              {sub.items.length} kegiatan
+                              {sub.catatan_verifikasi ? ` • "${sub.catatan_verifikasi}"` : ''}
+                            </span>
+                          </div>
+                          <span
+                            className={`text-xs font-bold px-2.5 py-1 rounded-lg shrink-0 ${
+                              sub.status === 'verified'
+                                ? 'bg-green-100 text-green-800 border border-green-200'
+                                : 'bg-red-100 text-red-700 border border-red-200'
+                            }`}
+                          >
+                            {sub.status === 'verified'
+                              ? `${(sub.poin_disetujui ?? sub.net_poin) >= 0 ? '+' : ''}${sub.poin_disetujui ?? sub.net_poin} Pts`
+                              : 'Ditolak'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -694,7 +1009,7 @@ export default function GuruDashboard({ app }: { app: AppModel }) {
         {guruTab === 'jadwal' && (
           <div className="space-y-6 max-w-5xl mx-auto">
             <JadwalPelajaranView
-              currentClass={selectedClassForJadwal || students[0]?.kelas || 'X TKJ 1'}
+              currentClass={selectedClassForJadwal || daftarKelasSemua[0] || students[0]?.kelas || ''}
               userRole={role}
               user={sessionUser}
               daftarKelas={daftarKelasSemua}
@@ -728,64 +1043,110 @@ export default function GuruDashboard({ app }: { app: AppModel }) {
               </div>
             </div>
 
-            <ModulBelumTersedia judul="Borang kesehatan dan buku UKS" />
+            <KesehatanUksPanel
+              student={students.find((s) => s.id === selectedStudentId) || students[0] || null}
+              userRole={role}
+              userUid={sessionUser?.uid}
+              userEmail={profile?.email}
+              myRayonId={myRayonId}
+              poinLogs={poinLogs}
+            />
           </div>
         )}
 
         {/* 4. GURU: SISWA */}
-        {guruTab === 'siswa' && (
-          <div className="space-y-4 max-w-5xl mx-auto">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <h1 className="text-xl font-bold text-gray-900">Direktori Santri Rayon Assimbani</h1>
-              <div className="flex flex-wrap items-center gap-2">
-                <input
-                  type="text"
-                  placeholder="Cari siswa / rombel / NISN..."
-                  value={studentSearch}
-                  onChange={(e) => setStudentSearch(e.target.value)}
-                  className="p-2 text-xs bg-white border border-gray-200 rounded-xl w-52 outline-none focus:border-[#2E7D32]"
-                />
-                <select
-                  value={staffKelasFilter}
-                  onChange={(e) => setStaffKelasFilter(e.target.value)}
-                  className="p-2 text-xs bg-white border border-gray-200 rounded-xl outline-none font-medium focus:border-[#2E7D32]"
-                >
-                  <option value="semua">Semua Kelas ({students.length})</option>
-                  {Array.from(new Set(students.map((s) => s.kelas)))
-                    .filter(Boolean)
-                    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
-                    .map((k) => (
-                      <option key={k} value={k}>
-                        {k}
+        {guruTab === 'siswa' && (() => {
+          const filteredStudents = students.filter((s) => {
+            const matchSearch =
+              !studentSearch ||
+              s.name.toLowerCase().includes(studentSearch.toLowerCase()) ||
+              s.nisn.toLowerCase().includes(studentSearch.toLowerCase()) ||
+              s.kelas.toLowerCase().includes(studentSearch.toLowerCase()) ||
+              s.rayon.toLowerCase().includes(studentSearch.toLowerCase());
+            const matchKelas =
+              staffKelasFilter === 'semua' || s.kelas === staffKelasFilter;
+            const matchRayon =
+              staffRayonFilter === 'semua' || s.rayon === staffRayonFilter;
+            return matchSearch && matchKelas && matchRayon;
+          });
+
+          const totalStaffPages = Math.ceil(filteredStudents.length / PAGE_SIZE) || 1;
+          const safeStaffPage = Math.min(staffPage, totalStaffPages);
+          const paginatedStudents = filteredStudents.slice(
+            (safeStaffPage - 1) * PAGE_SIZE,
+            safeStaffPage * PAGE_SIZE
+          );
+
+          const daftarRayon = Array.from(new Set(students.map((s) => s.rayon).filter(Boolean))).sort();
+
+          return (
+            <div className="space-y-4 max-w-5xl mx-auto">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h1 className="text-xl font-bold text-gray-900">Direktori Santri Assimbani</h1>
+                  <p className="text-xs text-gray-500">
+                    Menampilkan {filteredStudents.length} dari {students.length} santri terdaftar
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="text"
+                    placeholder="Cari nama / NISN / kelas..."
+                    value={studentSearch}
+                    onChange={(e) => {
+                      setStudentSearch(e.target.value);
+                      setStaffPage(1);
+                    }}
+                    className="p-2 text-xs bg-white border border-gray-200 rounded-xl w-48 outline-none focus:border-[#2E7D32]"
+                  />
+                  <select
+                    value={staffKelasFilter}
+                    onChange={(e) => {
+                      setStaffKelasFilter(e.target.value);
+                      setStaffPage(1);
+                    }}
+                    className="p-2 text-xs bg-white border border-gray-200 rounded-xl outline-none font-medium focus:border-[#2E7D32]"
+                  >
+                    <option value="semua">Semua Kelas</option>
+                    {Array.from(new Set(students.map((s) => s.kelas)))
+                      .filter(Boolean)
+                      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+                      .map((k) => (
+                        <option key={k} value={k}>
+                          Kelas {k}
+                        </option>
+                      ))}
+                  </select>
+                  <select
+                    value={staffRayonFilter}
+                    onChange={(e) => {
+                      setStaffRayonFilter(e.target.value);
+                      setStaffPage(1);
+                    }}
+                    className="p-2 text-xs bg-white border border-gray-200 rounded-xl outline-none font-medium focus:border-[#2E7D32]"
+                  >
+                    <option value="semua">Semua Rayon</option>
+                    {daftarRayon.map((r) => (
+                      <option key={r} value={r}>
+                        Rayon {r}
                       </option>
                     ))}
-                </select>
-                {canCreateStudent(role) && (
-                  <button
-                    type="button"
-                    onClick={() => setShowTambahSiswa(true)}
-                    className="px-3 py-2 bg-[#2E7D32] hover:bg-[#1B5E20] text-white text-xs font-bold rounded-xl shadow-sm flex items-center gap-1.5"
-                  >
-                    <PlusCircle className="w-3.5 h-3.5" />
-                    <span>Tambah Santri</span>
-                  </button>
-                )}
+                  </select>
+                  {canCreateStudent(role) && (
+                    <button
+                      type="button"
+                      onClick={() => setShowTambahSiswa(true)}
+                      className="px-3 py-2 bg-[#2E7D32] hover:bg-[#1B5E20] text-white text-xs font-bold rounded-xl shadow-sm flex items-center gap-1.5"
+                    >
+                      <PlusCircle className="w-3.5 h-3.5" />
+                      <span>Tambah Santri</span>
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-              {students
-                .filter((s) => {
-                  const matchSearch =
-                    !studentSearch ||
-                    s.name.toLowerCase().includes(studentSearch.toLowerCase()) ||
-                    s.nisn.toLowerCase().includes(studentSearch.toLowerCase()) ||
-                    s.kelas.toLowerCase().includes(studentSearch.toLowerCase());
-                  const matchKelas =
-                    staffKelasFilter === 'semua' || s.kelas === staffKelasFilter;
-                  return matchSearch && matchKelas;
-                })
-                .map((s) => (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                {paginatedStudents.map((s) => (
                   <div key={s.id} className="bg-white p-4 rounded-2xl border border-green-100 shadow-sm flex items-center justify-between">
                     <div>
                       <span className="font-bold text-gray-900 block">{s.name}</span>
@@ -797,24 +1158,90 @@ export default function GuruDashboard({ app }: { app: AppModel }) {
                       </span>
                       <span className="font-bold text-[#1B5E20] block mt-1">{s.points} Poin Karakter</span>
                     </div>
-                    <button
-                      onClick={() => {
-                        setSelectedStudentId(s.id);
-                        setGuruTab('kesehatan');
-                      }}
-                      className="px-3 py-1.5 bg-green-50 text-green-800 font-bold rounded-xl border border-green-200 text-xs flex items-center gap-1 hover:bg-green-100"
-                    >
-                      <HeartPulse className="w-3.5 h-3.5" />
-                      <span>Kesehatan</span>
-                    </button>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedStudentId(s.id);
+                          setGuruTab('rekap');
+                        }}
+                        className="px-2.5 py-1.5 bg-emerald-50 text-emerald-800 font-bold rounded-xl border border-emerald-300 text-xs flex items-center gap-1 hover:bg-emerald-100 transition-colors shadow-2xs"
+                        title="Cetak rekapan bulanan santri ini"
+                      >
+                        <Printer className="w-3.5 h-3.5" />
+                        <span>Cetak Rekap</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedStudentId(s.id);
+                          setGuruTab('kesehatan');
+                        }}
+                        className="px-2.5 py-1.5 bg-green-50 text-green-800 font-bold rounded-xl border border-green-200 text-xs flex items-center gap-1 hover:bg-green-100 transition-colors"
+                      >
+                        <HeartPulse className="w-3.5 h-3.5" />
+                        <span>Kesehatan</span>
+                      </button>
+                    </div>
                   </div>
                 ))}
-              {students.length === 0 && (
-                <div className="col-span-2 p-6 text-center text-gray-400 bg-white rounded-2xl border border-green-100">
-                  Belum ada data santri pada lingkup akun ini.
+                {filteredStudents.length === 0 && (
+                  <div className="col-span-2 p-6 text-center text-gray-400 bg-white rounded-2xl border border-green-100">
+                    Tidak ditemukan data santri dengan kriteria pencarian / filter ini.
+                  </div>
+                )}
+              </div>
+
+              {/* Kontrol Paginasi untuk Kapasitas Besar (1.000 - 2.000 Santri) */}
+              {filteredStudents.length > PAGE_SIZE && (
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-gray-200 text-xs text-gray-600 bg-white p-3.5 rounded-xl border">
+                  <span>
+                    Menampilkan{' '}
+                    <strong>
+                      {(safeStaffPage - 1) * PAGE_SIZE + 1} -{' '}
+                      {Math.min(safeStaffPage * PAGE_SIZE, filteredStudents.length)}
+                    </strong>{' '}
+                    dari <strong>{filteredStudents.length}</strong> santri
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={safeStaffPage <= 1}
+                      onClick={() => setStaffPage((p) => Math.max(1, p - 1))}
+                      className="px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed font-medium flex items-center gap-1"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" /> Sebelumnya
+                    </button>
+                    <span className="font-semibold text-gray-800 px-1">
+                      Halaman {safeStaffPage} dari {totalStaffPages}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={safeStaffPage >= totalStaffPages}
+                      onClick={() => setStaffPage((p) => Math.min(totalStaffPages, p + 1))}
+                      className="px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed font-medium flex items-center gap-1"
+                    >
+                      Selanjutnya <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
+          );
+        })()}
+
+        {/* 5. GURU: REKAP & CETAK BULANAN */}
+        {guruTab === 'rekap' && (
+          <div className="max-w-5xl mx-auto space-y-4">
+            <RekapBulananGuru
+              students={students}
+              poinLogs={app.poinLogs}
+              prestasiList={prestasiList}
+              userRole={role}
+              myRayonId={myRayonId}
+              initialStudentId={selectedStudentId}
+              initialKelas={staffKelasFilter !== 'semua' ? staffKelasFilter : undefined}
+            />
           </div>
         )}
       </main>

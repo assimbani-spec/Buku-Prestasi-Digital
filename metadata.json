@@ -1,6 +1,6 @@
 {
-  "name": "BKP Digital — Sistem Buku Kejar Prestasi",
-  "description": "Aplikasi digitalisasi buku catatan pembiasaan siswa, poin karakter, dan tanda tangan orang tua untuk SMK Thibbil Qulub Assimbani.",
+  "name": "JEJAK — Student Development Platform",
+  "description": "Merekam Proses, Menumbuhkan Potensi.Setiap langkah memiliki makna. Setiap anak memiliki kesempatan untuk berkembang.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

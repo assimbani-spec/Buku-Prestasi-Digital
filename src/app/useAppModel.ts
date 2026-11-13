@@ -57,6 +57,16 @@ import { ajukanPrestasi, putuskanPrestasi } from '../features/prestasi/prestasi'
 import LoginPage from '../features/auth/LoginPage';
 import { MemuatPanel, ModulBelumTersedia } from '../components/StatusPanel';
 import { initials, isoWeekNumber } from '../lib/format';
+import {
+  mapJejakDoc,
+  gabungkanRiwayatPoin,
+  type JejakHarianRow,
+} from '../features/rekap/poinHistory';
+import {
+  loadLocalSchoolConfig,
+  subscribeSchoolConfig,
+  type SchoolConfig,
+} from '../lib/schoolConfig';
 
 // Panel admin dan laporan (membawa recharts) hanya dimuat saat dibutuhkan,
 // supaya siswa dan guru tidak mengunduh kode yang tidak mereka pakai.
@@ -118,10 +128,42 @@ type StudentRow = {
   kelas: string;
   rayon: string;
   gender?: 'L' | 'P';
+  statusSiswa?: 'aktif' | 'lulus' | 'arsip';
+  tahunAjaran?: string;
+  tahunLulus?: string;
   points: number;
   studentEmail?: string;
   waliEmail?: string;
 };
+
+export interface NonRutinSubmission {
+  id: string;
+  siswa_id: string;
+  rayon: string;
+  nama_siswa?: string;
+  kelas?: string;
+  tahun: number;
+  pekan: number;
+  periode: string;
+  items: Array<{
+    id: string;
+    nama: string;
+    kategori: string;
+    mapel: string;
+    status: string;
+    poin: number;
+    saksi: string;
+    detail: string;
+  }>;
+  total_poin: number;
+  net_poin: number;
+  status: 'pending' | 'verified' | 'rejected';
+  poin_disetujui?: number;
+  catatan_verifikasi?: string;
+  dicatat_oleh?: string;
+  verifiedBy?: string;
+  updatedAtMs?: number;
+}
 
 export function useAppModel() {
   const [currentRoute, setCurrentRoute] = useState<AppRoute>('login');
@@ -136,7 +178,7 @@ export function useAppModel() {
   // Tab State for Mobile Roles
   const [siswaTab, setSiswaTab] = useState<NavTab>('jurnal');
   const [ortuTab, setOrtuTab] = useState<NavTab>('home');
-  const [guruTab, setGuruTab] = useState<'dashboard' | 'input_poin' | 'verifikasi' | 'jadwal' | 'kesehatan' | 'siswa'>('dashboard');
+  const [guruTab, setGuruTab] = useState<'dashboard' | 'input_poin' | 'verifikasi' | 'rekap' | 'jadwal' | 'kesehatan' | 'siswa'>('dashboard');
 
   // Siswa State
   const [siswaDate, setSiswaDate] = useState(new Date().toISOString().split('T')[0]);
@@ -148,13 +190,24 @@ export function useAppModel() {
   const [tahunPelajaranFilter, setTahunPelajaranFilter] = useState<string>('Semua');
   const [guruTahunFilter, setGuruTahunFilter] = useState<string>('Semua');
   const [guruStatusFilter, setGuruStatusFilter] = useState<string>('Semua');
-  const [selectedClassForJadwal, setSelectedClassForJadwal] = useState<string>('X TKJ 1');
+  const [selectedClassForJadwal, setSelectedClassForJadwal] = useState<string>('');
 
   // Pembiasaan Harian Lengkap Sesuai Dokumen Resmi BKP Hal 15-16 & 59
   const [jurnal, setJurnal] = useState({
-    // Sholat Sunnah Utama
+    // Sholat Sunnah Utama & Tambahan
     tahajud: '4_rakaat' as '4_rakaat' | '2_rakaat' | 'tidak' | 'menstruasi', // 4 Rakaat (+6), 2 Rakaat (+3), Tidak (0), Menstruasi (M)
     dhuha: '4_rakaat' as '4_rakaat' | '2_rakaat' | 'tidak' | 'menstruasi',   // 4 Rakaat (+4), 2 Rakaat (+2), Tidak (0), Menstruasi (M)
+    sholat_taubat: false,          // Sholat Sunnah Taubat (+3)
+    sholat_rawatib: false,         // Sholat Rawatib Qobliyah & Ba'diyah (+4)
+    sholat_awwabin: false,         // Sholat Sunnah Awwabin (+3)
+    sholat_lihifdhil_iman: false,  // Sholat Sunnah Li Hifdhil Iman (+3)
+    sholat_birrul_walidain: false, // Sholat Sunnah Birrul Walidain (+3)
+    sholat_hajat: false,           // Sholat Li Qodho'il Hajati (+3)
+    sholat_istikharah: false,      // Sholat Istikhoroh (+3)
+    sholat_liridhoillah: false,    // Sholat Li Ridhollah (+3)
+    sholat_syukur: false,          // Sholat Syukur (+3)
+    sujud_syukur: false,           // Sujud Syukur (+2)
+    sholat_tasbih: false,          // Sholat Tasbih (+4)
 
     // 5 Sholat Fardhu
     subuh: 'berjamaah' as 'berjamaah' | 'masbuk' | 'munfarid' | 'menstruasi',
@@ -163,10 +216,14 @@ export function useAppModel() {
     maghrib: 'berjamaah' as 'berjamaah' | 'masbuk' | 'munfarid' | 'menstruasi',
     isya: 'berjamaah' as 'berjamaah' | 'masbuk' | 'munfarid' | 'menstruasi',
 
-    // Spiritual & Quran
-    mengaji: true,      // Mengaji/Menghafal Alquran (+1)
-    zikir_pagi: true,   // Zikir Pagi (+1)
-    zikir_sore: true,   // Zikir Sore (+1)
+    // Spiritual, Al-Qur'an & Dzikir Thoriqoh
+    mengaji: true,          // Mengaji / Menghafal Alquran (+1)
+    surat_yasin: true,      // Membaca Surat Yasin (+2)
+    surat_waqiah: true,     // Membaca Surat Al-Waqi'ah (+2)
+    surat_al_mulk: true,    // Membaca Surat Al-Mulk (+2)
+    zikir_pagi: true,       // Zikir Pagi (+1)
+    zikir_sore: true,       // Zikir Sore (+1)
+    dzikir_thoriqoh: true,  // Bacaan Wirid Dzikir Thoriqoh Harian (+4)
 
     // Aspek Kesehatan & Kebiasaan Fisik
     bangun_subuh: true, // Bangun sebelum pukul 5 (+1)
@@ -178,7 +235,7 @@ export function useAppModel() {
     // Aspek Kewargaan
     kelompok_belajar: true, // Aktif dalam kelompok belajar (+4)
     sedang_menstruasi: false, // Dispensasi haid syar'i untuk siswi
-    catatan: 'Mengaji QS. Al-Mulk ayat 1-15 bersama Ustadz pembina & sholat tahajud 4 rakaat',
+    catatan: 'Mengaji QS. Yasin, Al-Waqiah, Al-Mulk, sholat tahajud, dan dzikir thoriqoh Allah 5000x',
   });
 
   // 12 Indikator Pembiasaan Mingguan (Pekanan)
@@ -394,7 +451,9 @@ export function useAppModel() {
 
   // Prestasi dimuat dari Firestore (collection "prestasi"):
   // siswa mengajukan (status pending, poin 0) → staf memverifikasi.
-  const [prestasiList, setPrestasiList] = useState<(PrestasiRecord & { createdAtMs?: number })[]>([]);
+  const [prestasiList, setPrestasiList] = useState<
+    (PrestasiRecord & { createdAtMs?: number; verifiedAtMs?: number })[]
+  >([]);
   const [prestasiForm, setPrestasiForm] = useState({
     judul: '',
     kategori: 'Prestasi Kejuaraan',
@@ -414,7 +473,9 @@ export function useAppModel() {
   const [verifyCatatan, setVerifyCatatan] = useState<Record<string, string>>({});
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
 
-  // Master data & audit log (dipakai panel admin)
+  // Master data & konfigurasi sekolah
+  const [schoolConfig, setSchoolConfig] = useState<SchoolConfig>(loadLocalSchoolConfig);
+  const [masterKelas, setMasterKelas] = useState<string[]>([]);
   const [masterKategori, setMasterKategori] = useState<
     { kode: string; tipe: 'apresiasi' | 'konsekuensi'; kategori: string; deskripsi: string; poin: number }[]
   >([]);
@@ -471,7 +532,7 @@ export function useAppModel() {
     { kode: 'K 3.6', tipe: 'konsekuensi', kategori: 'Rayon', deskripsi: 'Tidak melaksanakan Piket Rayon (Piket pengganti 2x)', poin: 100 },
     { kode: 'K 3.7', tipe: 'konsekuensi', kategori: 'Rayon', deskripsi: 'Tidak mengikuti kumpul rayon tanpa izin', poin: 100 },
     { kode: 'K 4.1', tipe: 'konsekuensi', kategori: 'Disiplin', deskripsi: 'Terlambat hadir di sekolah', poin: 50 },
-    { kode: 'K 4.3', tipe: 'konsekuensi', kategori: 'Disiplin', deskripsi: 'Tidak membawa buku kejar prestasi (BKP)', poin: 100 },
+    { kode: 'K 4.3', tipe: 'konsekuensi', kategori: 'Disiplin', deskripsi: 'Tidak membawa buku Jejak (catatan pembiasaan)', poin: 100 },
     { kode: 'K 4.4', tipe: 'konsekuensi', kategori: 'Kesehatan', deskripsi: 'Tidak membawa botol minum saat pelajaran olahraga', poin: 50 },
     { kode: 'K 4.18', tipe: 'konsekuensi', kategori: 'Disiplin', deskripsi: 'Membawa HP ke lingkungan sekolah tanpa izin', poin: 250 },
     { kode: 'K 5.9', tipe: 'konsekuensi', kategori: 'Kesehatan', deskripsi: 'Tidak mengikuti Pemeriksaan Kesehatan / Asesmen', poin: 150 },
@@ -485,9 +546,18 @@ export function useAppModel() {
     tipe: string;
     deskripsi: string;
     poin: number;
+    koreksiDari?: string;
     createdMs: number;
     time: string;
   }[]>([]);
+
+  // Riwayat Jejak Harian untuk akun orang tua & siswa (collection "pembiasaan_harian")
+  const [harianLogs, setHarianLogs] = useState<JejakHarianRow[]>([]);
+
+  // Pengajuan & verifikasi kegiatan non-rutin (collection "pembiasaan_non_rutin")
+  const [nonRutinSubmissions, setNonRutinSubmissions] = useState<NonRutinSubmission[]>([]);
+  const [verifyingNonRutinId, setVerifyingNonRutinId] = useState<string | null>(null);
+  const [koreksiLoadingId, setKoreksiLoadingId] = useState<string | null>(null);
 
   // Pemberitahuan resmi untuk akun ini (collection "notifikasi").
   const [notifikasiList, setNotifikasiList] = useState<{
@@ -524,7 +594,7 @@ export function useAppModel() {
         const adminDoc = {
           uid: user.uid,
           email: emailLower,
-          fullName: user.displayName || (emailLower.includes('admin') ? 'Administrator BKP' : 'Super Admin BKP'),
+          fullName: user.displayName || (emailLower.includes('admin') ? 'Administrator Jejak' : 'Super Admin Jejak'),
           role: 'admin' as const,
           active: true,
           total_poin: 0,
@@ -627,7 +697,13 @@ export function useAppModel() {
       nisn: data.nisn ?? '',
       kelas: data.kelas ?? '-',
       rayon: data.rayon ?? '-',
-      gender: data.gender ?? (isPerempuanByRayonOrName ? 'P' : 'L'),
+      gender: data.gender === 'P' || data.gender === 'L'
+        ? data.gender
+        : (isPerempuanByRayonOrName ? 'P' : 'L'),
+      statusSiswa:
+        data.statusSiswa === 'lulus' || data.statusSiswa === 'arsip' ? data.statusSiswa : 'aktif',
+      tahunAjaran: data.tahunAjaran ?? undefined,
+      tahunLulus: data.tahunLulus ?? undefined,
       points: Number(data.points) || 0,
       studentEmail: data.studentEmail ?? data.email ?? '',
       waliEmail: data.waliEmail ?? '',
@@ -642,17 +718,23 @@ export function useAppModel() {
     }
 
     const subs: Array<() => void> = [];
-    const applyDocs = (docs: { id: string; data: () => any }[]) =>
-      setStudents(docs.map((d) => mapStudentDoc(d.id, d.data())));
+    const applyDocs = (docs: { id: string; data: () => any }[], activeOnly = false) => {
+      const mapped = docs.map((d) => mapStudentDoc(d.id, d.data()));
+      setStudents(
+        activeOnly
+          ? mapped.filter((s) => s.statusSiswa !== 'lulus' && s.statusSiswa !== 'arsip')
+          : mapped
+      );
+    };
     const onErr = (label: string) => (err: Error) =>
       setErrorMsg(`${label}: ${err.message}`);
 
     if (canSeeAllStudents(role)) {
-      // Guru & admin: seluruh koleksi.
+      // Guru & admin di dashboard staff: hanya santri aktif (alumni dikelola di arsip AdminPanel).
       subs.push(
         onSnapshot(
           collection(db, 'students'),
-          (snap) => applyDocs(snap.docs),
+          (snap) => applyDocs(snap.docs, true),
           onErr('Gagal memuat daftar santri')
         )
       );
@@ -663,7 +745,7 @@ export function useAppModel() {
         subs.push(
           onSnapshot(
             query(collection(db, 'students'), where('rayon', '==', myRayonId)),
-            (snap) => applyDocs(snap.docs),
+            (snap) => applyDocs(snap.docs, true),
             onErr('Gagal memuat santri rayon')
           )
         );
@@ -738,6 +820,7 @@ export function useAppModel() {
         tipe: data.tipe ?? 'apresiasi',
         deskripsi: data.deskripsi ?? '',
         poin: Number(data.poin) || 0,
+        koreksiDari: data.koreksi_dari ?? '',
         createdMs,
         time: createdMs ? new Date(createdMs).toLocaleString('id-ID') : 'Baru saja',
       };
@@ -828,11 +911,137 @@ export function useAppModel() {
             verifiedBy: data.verifiedBy ?? '',
             catatan_verifikasi: data.catatan_verifikasi ?? '',
             createdAtMs: data.createdAt?.toMillis ? data.createdAt.toMillis() : 0,
-          } as PrestasiRecord & { createdAtMs: number };
+            verifiedAtMs: data.verifiedAt?.toMillis ? data.verifiedAt.toMillis() : 0,
+          } as PrestasiRecord & { createdAtMs: number; verifiedAtMs: number };
         });
         setPrestasiList(rows.sort((a, b) => (b.createdAtMs ?? 0) - (a.createdAtMs ?? 0)));
       },
       (err) => setErrorMsg('Gagal memuat data prestasi: ' + err.message)
+    );
+    return () => unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionUser, profile, role, myStudentId, myRayonId, myChildIds.join('|')]);
+
+  // Jejak Harian untuk orang tua (query childIds) & siswa (baca per-hari bulan berjalan via doc ID)
+  useEffect(() => {
+    if (!sessionUser || !profile) {
+      setHarianLogs([]);
+      return;
+    }
+
+    if (role === 'orang_tua' && myChildIds.length > 0) {
+      const q = query(
+        collection(db, 'pembiasaan_harian'),
+        where('student_id', 'in', myChildIds.slice(0, 10))
+      );
+      const unsub = onSnapshot(
+        q,
+        (snap) => {
+          setHarianLogs(snap.docs.map((d) => mapJejakDoc(d.id, d.data() as Record<string, any>)));
+        },
+        () => {
+          setHarianLogs([]);
+        }
+      );
+      return () => unsub();
+    }
+
+    if (role === 'siswa' && siswaTab === 'poin') {
+      let cancelled = false;
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = now.getMonth() + 1;
+      const maxDay = now.getDate();
+      const ym = `${year}-${String(month).padStart(2, '0')}`;
+      const dates = Array.from({ length: maxDay }, (_, i) => `${ym}-${String(i + 1).padStart(2, '0')}`);
+
+      Promise.all(
+        dates.map((dateStr) =>
+          getDoc(doc(db, 'pembiasaan_harian', `${sessionUser.uid}_${dateStr}`)).catch(() => null)
+        )
+      ).then((snaps) => {
+        if (cancelled) return;
+        const rows: JejakHarianRow[] = [];
+        snaps.forEach((snap) => {
+          if (snap && snap.exists()) {
+            rows.push(mapJejakDoc(snap.id, snap.data() as Record<string, any>));
+          }
+        });
+        setHarianLogs(rows);
+      });
+
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    if (role !== 'orang_tua' && role !== 'siswa') {
+      setHarianLogs([]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionUser?.uid, profile, role, myChildIds.join('|'), siswaTab, siswaSaveSuccess]);
+
+  // Kegiatan Non-Rutin real-time (terbatas peran sesuai firestore.rules)
+  useEffect(() => {
+    if (!sessionUser || !profile) {
+      setNonRutinSubmissions([]);
+      return;
+    }
+
+    let nrQuery: ReturnType<typeof query> | null = null;
+    if (canSeeAllStudents(role)) {
+      nrQuery = query(collection(db, 'pembiasaan_non_rutin'));
+    } else if (role === 'pembimbing_rayon' && myRayonId) {
+      nrQuery = query(collection(db, 'pembiasaan_non_rutin'), where('rayon', '==', myRayonId));
+    } else if (role === 'siswa' && myStudentId) {
+      nrQuery = query(collection(db, 'pembiasaan_non_rutin'), where('siswa_id', '==', myStudentId));
+    } else if (role === 'orang_tua' && myChildIds.length > 0) {
+      nrQuery = query(
+        collection(db, 'pembiasaan_non_rutin'),
+        where('siswa_id', 'in', myChildIds.slice(0, 10))
+      );
+    }
+
+    if (!nrQuery) {
+      setNonRutinSubmissions([]);
+      return;
+    }
+
+    const unsub = onSnapshot(
+      nrQuery,
+      (snap) => {
+        const rows = snap.docs
+          .map((d) => {
+            const data = d.data() as any;
+            const items = Array.isArray(data.items) ? data.items : [];
+            const calcNet = items.reduce((acc: number, it: any) => acc + (Number(it.poin) || 0), 0);
+            return {
+              id: d.id,
+              siswa_id: data.siswa_id ?? '',
+              rayon: data.rayon ?? '',
+              nama_siswa: data.nama_siswa ?? '',
+              kelas: data.kelas ?? '',
+              tahun: Number(data.tahun) || new Date().getFullYear(),
+              pekan: Number(data.pekan) || 1,
+              periode: data.periode ?? d.id,
+              items,
+              total_poin: Number(data.total_poin) || 0,
+              net_poin: data.net_poin !== undefined ? Number(data.net_poin) : calcNet,
+              status:
+                data.status === 'verified' || data.status === 'rejected' ? data.status : 'pending',
+              poin_disetujui: data.poin_disetujui !== undefined ? Number(data.poin_disetujui) : undefined,
+              catatan_verifikasi: data.catatan_verifikasi ?? '',
+              dicatat_oleh: data.dicatat_oleh ?? '',
+              verifiedBy: data.verifiedBy ?? '',
+              updatedAtMs: data.updatedAt?.toMillis ? data.updatedAt.toMillis() : 0,
+            } as NonRutinSubmission;
+          })
+          .sort((a, b) => (b.updatedAtMs ?? 0) - (a.updatedAtMs ?? 0));
+        setNonRutinSubmissions(rows);
+      },
+      () => {
+        setNonRutinSubmissions([]);
+      }
     );
     return () => unsub();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -872,6 +1081,31 @@ export function useAppModel() {
     );
     return () => unsub();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionUser]);
+
+  // Konfigurasi sekolah (kop surat, nama sekolah, kepala sekolah / waka kesiswaan)
+  useEffect(() => {
+    return subscribeSchoolConfig(setSchoolConfig);
+  }, []);
+
+  // Master kelas dari Firestore (dikelola Admin)
+  useEffect(() => {
+    if (!sessionUser) {
+      setMasterKelas([]);
+      return;
+    }
+    const unsub = onSnapshot(
+      collection(db, 'master_kelas'),
+      (snap) => {
+        const rows = snap.docs
+          .map((d) => String((d.data() as any).nama || d.id).trim())
+          .filter(Boolean)
+          .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+        setMasterKelas(rows);
+      },
+      () => setMasterKelas([])
+    );
+    return () => unsub();
   }, [sessionUser]);
 
   // Master kategori poin: dipakai form guru (fallback ke daftar bawaan)
@@ -1050,17 +1284,12 @@ export function useAppModel() {
 
   const daftarKelasSemua = Array.from(
     new Set([
-      'X TKJ 1',
-      'X TKJ 2',
-      'X Farmasi A',
-      'X Farmasi B',
-      'X Keperawatan A',
-      'X Keperawatan B',
-      'XI Farmasi A',
-      'XI Keperawatan A',
+      ...masterKelas,
       ...students.map((s) => s.kelas),
     ])
-  ).filter(Boolean);
+  )
+    .filter((k) => Boolean(k) && k !== '-')
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
   // Muat isian non-rutin yang sudah tersimpan pada pekan ini (bila ada).
   useEffect(() => {
@@ -1108,6 +1337,7 @@ export function useAppModel() {
     : null;
 
   const pendingPrestasi = prestasiList.filter((p) => p.status === 'pending');
+  const pendingNonRutin = nonRutinSubmissions.filter((n) => n.status === 'pending');
 
   // Angka yang ditampilkan ke wali santri: semua dihitung dari data tersimpan.
   const currentWeek = isoWeekNumber(new Date());
@@ -1120,6 +1350,15 @@ export function useAppModel() {
   const studentPoinLogs = currentStudent.id
     ? poinLogs.filter((l) => l.studentId === currentStudent.id)
     : poinLogs;
+  const studentHarianLogs = currentStudent.id
+    ? harianLogs.filter((h) => h.studentId === currentStudent.id)
+    : harianLogs;
+  const unifiedStudentLogs = gabungkanRiwayatPoin({
+    poinLogs: studentPoinLogs,
+    harianLogs: studentHarianLogs,
+    prestasiList,
+    studentId: currentStudent.id || undefined,
+  });
   const lastKonsekuensi = studentPoinLogs.find((l) => l.tipe === 'konsekuensi');
 
   // Ringkasan staf dihitung dari data nyata, bukan angka tetap.
@@ -1151,9 +1390,29 @@ export function useAppModel() {
       else if (s === 'munfarid') pts += 1;
     });
 
+    // Sholat Sunnah Tambahan
+    if (jurnal.sholat_taubat) pts += 3;
+    if (jurnal.sholat_rawatib) pts += 4;
+    if (jurnal.sholat_awwabin) pts += 3;
+    if (jurnal.sholat_lihifdhil_iman) pts += 3;
+    if (jurnal.sholat_birrul_walidain) pts += 3;
+    if (jurnal.sholat_hajat) pts += 3;
+    if (jurnal.sholat_istikharah) pts += 3;
+    if (jurnal.sholat_liridhoillah) pts += 3;
+    if (jurnal.sholat_syukur) pts += 3;
+    if (jurnal.sujud_syukur) pts += 2;
+    if (jurnal.sholat_tasbih) pts += 4;
+
+    // Tilawah Al-Qur'an & Dzikir Thoriqoh
     if (jurnal.mengaji) pts += 1;
+    if (jurnal.surat_yasin) pts += 2;
+    if (jurnal.surat_waqiah) pts += 2;
+    if (jurnal.surat_al_mulk) pts += 2;
     if (jurnal.zikir_pagi) pts += 1;
     if (jurnal.zikir_sore) pts += 1;
+    if (jurnal.dzikir_thoriqoh) pts += 4;
+
+    // Kebiasaan Fisik, Kesehatan & Kewargaan
     if (jurnal.bangun_subuh) pts += 1;
     if (jurnal.tidur_awal) pts += 1;
     if (jurnal.air_putih) pts += 1;
@@ -1163,6 +1422,55 @@ export function useAppModel() {
 
     return pts;
   };
+
+  // Muat pembiasaan harian yang tersimpan jika berganti tanggal
+  useEffect(() => {
+    if (!sessionUser?.uid || !siswaDate) return;
+    const jurnalId = `${sessionUser.uid}_${siswaDate}`;
+    getDoc(doc(db, 'pembiasaan_harian', jurnalId))
+      .then((snap) => {
+        if (snap.exists()) {
+          const d = snap.data() as any;
+          setJurnal((prev) => ({
+            ...prev,
+            tahajud: d.tahajud ?? prev.tahajud,
+            dhuha: d.dhuha ?? prev.dhuha,
+            sholat_taubat: Boolean(d.sholat_taubat),
+            sholat_rawatib: Boolean(d.sholat_rawatib),
+            sholat_awwabin: Boolean(d.sholat_awwabin),
+            sholat_lihifdhil_iman: Boolean(d.sholat_lihifdhil_iman),
+            sholat_birrul_walidain: Boolean(d.sholat_birrul_walidain),
+            sholat_hajat: Boolean(d.sholat_hajat),
+            sholat_istikharah: Boolean(d.sholat_istikharah),
+            sholat_liridhoillah: Boolean(d.sholat_liridhoillah),
+            sholat_syukur: Boolean(d.sholat_syukur),
+            sujud_syukur: Boolean(d.sujud_syukur),
+            sholat_tasbih: Boolean(d.sholat_tasbih),
+            subuh: d.subuh ?? prev.subuh,
+            dzuhur: d.dzuhur ?? prev.dzuhur,
+            ashar: d.ashar ?? prev.ashar,
+            maghrib: d.maghrib ?? prev.maghrib,
+            isya: d.isya ?? prev.isya,
+            mengaji: d.mengaji !== undefined ? Boolean(d.mengaji) : prev.mengaji,
+            surat_yasin: d.surat_yasin !== undefined ? Boolean(d.surat_yasin) : prev.surat_yasin,
+            surat_waqiah: d.surat_waqiah !== undefined ? Boolean(d.surat_waqiah) : prev.surat_waqiah,
+            surat_al_mulk: d.surat_al_mulk !== undefined ? Boolean(d.surat_al_mulk) : prev.surat_al_mulk,
+            zikir_pagi: d.zikir_pagi !== undefined ? Boolean(d.zikir_pagi) : prev.zikir_pagi,
+            zikir_sore: d.zikir_sore !== undefined ? Boolean(d.zikir_sore) : prev.zikir_sore,
+            dzikir_thoriqoh: d.dzikir_thoriqoh !== undefined ? Boolean(d.dzikir_thoriqoh) : prev.dzikir_thoriqoh,
+            bangun_subuh: d.bangun_subuh !== undefined ? Boolean(d.bangun_subuh) : prev.bangun_subuh,
+            tidur_awal: d.tidur_awal !== undefined ? Boolean(d.tidur_awal) : prev.tidur_awal,
+            air_putih: d.air_putih !== undefined ? Boolean(d.air_putih) : prev.air_putih,
+            mandi_2x: d.mandi_2x !== undefined ? Boolean(d.mandi_2x) : prev.mandi_2x,
+            grooming: d.grooming !== undefined ? Boolean(d.grooming) : prev.grooming,
+            kelompok_belajar: d.kelompok_belajar !== undefined ? Boolean(d.kelompok_belajar) : prev.kelompok_belajar,
+            sedang_menstruasi: Boolean(d.sedang_menstruasi),
+            catatan: d.catatan ?? prev.catatan,
+          }));
+        }
+      })
+      .catch(() => {});
+  }, [sessionUser?.uid, siswaDate]);
 
   const saveJurnal = async () => {
     if (!sessionUser) {
@@ -1196,21 +1504,36 @@ export function useAppModel() {
       tanggal: siswaDate,
       tahajud: jurnal.tahajud,
       dhuha: jurnal.dhuha,
+      sholat_taubat: Boolean(jurnal.sholat_taubat),
+      sholat_rawatib: Boolean(jurnal.sholat_rawatib),
+      sholat_awwabin: Boolean(jurnal.sholat_awwabin),
+      sholat_lihifdhil_iman: Boolean(jurnal.sholat_lihifdhil_iman),
+      sholat_birrul_walidain: Boolean(jurnal.sholat_birrul_walidain),
+      sholat_hajat: Boolean(jurnal.sholat_hajat),
+      sholat_istikharah: Boolean(jurnal.sholat_istikharah),
+      sholat_liridhoillah: Boolean(jurnal.sholat_liridhoillah),
+      sholat_syukur: Boolean(jurnal.sholat_syukur),
+      sujud_syukur: Boolean(jurnal.sujud_syukur),
+      sholat_tasbih: Boolean(jurnal.sholat_tasbih),
       subuh: jurnal.subuh,
       dzuhur: jurnal.dzuhur,
       ashar: jurnal.ashar,
       maghrib: jurnal.maghrib,
       isya: jurnal.isya,
-      mengaji: jurnal.mengaji,
-      zikir_pagi: jurnal.zikir_pagi,
-      zikir_sore: jurnal.zikir_sore,
-      bangun_subuh: jurnal.bangun_subuh,
-      tidur_awal: jurnal.tidur_awal,
-      air_putih: jurnal.air_putih,
-      mandi_2x: jurnal.mandi_2x,
-      grooming: jurnal.grooming,
-      kelompok_belajar: jurnal.kelompok_belajar,
-      sedang_menstruasi: jurnal.sedang_menstruasi,
+      mengaji: Boolean(jurnal.mengaji),
+      surat_yasin: Boolean(jurnal.surat_yasin),
+      surat_waqiah: Boolean(jurnal.surat_waqiah),
+      surat_al_mulk: Boolean(jurnal.surat_al_mulk),
+      zikir_pagi: Boolean(jurnal.zikir_pagi),
+      zikir_sore: Boolean(jurnal.zikir_sore),
+      dzikir_thoriqoh: Boolean(jurnal.dzikir_thoriqoh),
+      bangun_subuh: Boolean(jurnal.bangun_subuh),
+      tidur_awal: Boolean(jurnal.tidur_awal),
+      air_putih: Boolean(jurnal.air_putih),
+      mandi_2x: Boolean(jurnal.mandi_2x),
+      grooming: Boolean(jurnal.grooming),
+      kelompok_belajar: Boolean(jurnal.kelompok_belajar),
+      sedang_menstruasi: Boolean(jurnal.sedang_menstruasi),
       catatan: jurnal.catatan,
       poin_harian: dailyPts,
       updatedAt: serverTimestamp(),
@@ -1286,6 +1609,7 @@ export function useAppModel() {
     const tahun = new Date().getFullYear();
     const periodeKey = `${tahun}_P${currentWeek}`;
     const docId = `${currentStudent.id}_${periodeKey}`;
+    const docRef = doc(db, 'pembiasaan_non_rutin', docId);
     const items = nonRutinList.map((item) => ({
       id: item.id,
       nama: item.nama,
@@ -1297,20 +1621,31 @@ export function useAppModel() {
       detail: item.detail,
     }));
     const totalPoin = items.reduce((acc, item) => acc + (item.poin > 0 ? item.poin : 0), 0);
+    const netPoin = items.reduce((acc, item) => acc + (Number(item.poin) || 0), 0);
 
     setNonRutinSaving(true);
     try {
+      const existing = await getDoc(docRef);
+      if (existing.exists() && (existing.data() as any)?.status === 'verified' && role === 'siswa') {
+        setErrorMsg('Laporan non-rutin pekan ini sudah diverifikasi guru dan tidak dapat diubah lagi.');
+        return;
+      }
+
       const batch = writeBatch(db);
       batch.set(
-        doc(db, 'pembiasaan_non_rutin', docId),
+        docRef,
         {
           siswa_id: currentStudent.id,
           rayon: currentStudent.rayon,
+          nama_siswa: currentStudent.name,
+          kelas: currentStudent.kelas,
           tahun,
           pekan: currentWeek,
           periode: periodeKey,
           items,
           total_poin: totalPoin,
+          net_poin: netPoin,
+          status: 'pending',
           dicatat_oleh: sessionUser.uid,
           updatedAt: serverTimestamp(),
         },
@@ -1326,7 +1661,7 @@ export function useAppModel() {
             docId,
             siswaId: currentStudent.id,
             rayon: currentStudent.rayon,
-            after: { periode: periodeKey, total_poin: totalPoin, jumlah_kegiatan: items.length },
+            after: { periode: periodeKey, total_poin: totalPoin, net_poin: netPoin, jumlah_kegiatan: items.length },
           })
         );
       }
@@ -1340,6 +1675,87 @@ export function useAppModel() {
       );
     } finally {
       setNonRutinSaving(false);
+    }
+  };
+
+  // Verifikasi kegiatan non-rutin oleh Guru / Pembimbing Rayon / Admin
+  const handleVerifyNonRutin = async (
+    sub: NonRutinSubmission,
+    decision: 'verified' | 'rejected',
+    catatan?: string
+  ) => {
+    if (!sessionUser || !auditActor) {
+      setErrorMsg('Sesi berakhir. Silakan masuk kembali.');
+      return;
+    }
+    if (!isStaffRole(role)) {
+      setErrorMsg('Hanya guru, pembimbing rayon, atau admin yang dapat memverifikasi kegiatan non-rutin.');
+      return;
+    }
+
+    setVerifyingNonRutinId(sub.id);
+    try {
+      const ref = doc(db, 'pembiasaan_non_rutin', sub.id);
+      const snap = await getDoc(ref);
+      if (!snap.exists()) throw new Error('Data pengajuan non-rutin tidak ditemukan.');
+      const curData = snap.data() as any;
+      if (curData.status === 'verified' || curData.status === 'rejected') {
+        throw new Error('Kegiatan non-rutin ini sudah diproses sebelumnya.');
+      }
+
+      const finalPoin = decision === 'verified' ? (sub.net_poin ?? sub.total_poin) : 0;
+      const batch = writeBatch(db);
+      batch.set(
+        ref,
+        {
+          status: decision,
+          poin_disetujui: finalPoin,
+          catatan_verifikasi: catatan?.trim() ?? '',
+          verifiedBy: sessionUser.uid,
+          verifiedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      if (decision === 'verified' && finalPoin !== 0 && sub.siswa_id) {
+        batch.update(doc(db, 'students', sub.siswa_id), {
+          points: increment(finalPoin),
+          updatedAt: serverTimestamp(),
+        });
+        batch.set(doc(collection(db, 'poin_log')), {
+          siswa_id: sub.siswa_id,
+          rayon: sub.rayon,
+          kode: 'NON-RUTIN',
+          tipe: finalPoin >= 0 ? 'apresiasi' : 'konsekuensi',
+          deskripsi: `Kegiatan Non-Rutin (${sub.periode}): ${sub.items.length} kegiatan terverifikasi`,
+          poin: Math.abs(finalPoin),
+          dicatat_oleh: sessionUser.uid,
+          createdAt: serverTimestamp(),
+        });
+      }
+
+      batch.set(
+        newAuditRef(),
+        buildAuditPayload({
+          actor: auditActor,
+          action: decision === 'verified' ? 'non_rutin_verify' : 'non_rutin_reject',
+          collectionName: 'pembiasaan_non_rutin',
+          docId: sub.id,
+          siswaId: sub.siswa_id,
+          rayon: sub.rayon,
+          after: { status: decision, poin_disetujui: finalPoin, catatan_verifikasi: catatan?.trim() ?? '' },
+        })
+      );
+
+      await batch.commit();
+    } catch (err) {
+      setErrorMsg(
+        'Gagal memverifikasi kegiatan non-rutin: ' +
+          (err instanceof Error ? err.message : String(err))
+      );
+    } finally {
+      setVerifyingNonRutinId(null);
     }
   };
 
@@ -1477,6 +1893,91 @@ export function useAppModel() {
       setErrorMsg(
         'Gagal menyimpan poin: ' + (err instanceof Error ? err.message : String(err))
       );
+    }
+  };
+
+  // Koreksi / pembatalan catatan poin salah input (membuat entri penyeimbang + audit)
+  const handleKoreksiPoin = async (log: {
+    id: string;
+    studentId: string;
+    kode: string;
+    tipe: string;
+    deskripsi: string;
+    poin: number;
+    koreksiDari?: string;
+  }) => {
+    if (!sessionUser || !auditActor) {
+      setErrorMsg('Sesi berakhir. Silakan masuk kembali.');
+      return;
+    }
+    if (!isStaffRole(role)) {
+      setErrorMsg('Hanya guru, pembimbing rayon, atau admin yang dapat mengoreksi poin.');
+      return;
+    }
+    if (log.kode === 'KOREKSI' || log.koreksiDari) {
+      setErrorMsg('Catatan koreksi tidak dapat dikoreksi ulang.');
+      return;
+    }
+    if (poinLogs.some((l) => l.koreksiDari === log.id)) {
+      setErrorMsg('Catatan poin ini sudah pernah dikoreksi/dibatalkan.');
+      return;
+    }
+
+    const targetStudent = students.find((s) => s.id === log.studentId);
+    if (!targetStudent) {
+      setErrorMsg('Data santri untuk catatan ini tidak ditemukan dalam cakupan akses Anda.');
+      return;
+    }
+
+    const reversalTipe = log.tipe === 'apresiasi' ? 'konsekuensi' : 'apresiasi';
+    const delta = log.tipe === 'apresiasi' ? -log.poin : log.poin;
+    const deskripsi = `Koreksi/Batal [${log.kode}]: ${log.deskripsi}`;
+
+    setKoreksiLoadingId(log.id);
+    try {
+      const batch = writeBatch(db);
+      const revRef = doc(collection(db, 'poin_log'));
+
+      batch.set(revRef, {
+        siswa_id: targetStudent.id,
+        rayon: targetStudent.rayon,
+        kode: 'KOREKSI',
+        tipe: reversalTipe,
+        deskripsi,
+        poin: log.poin,
+        koreksi_dari: log.id,
+        dicatat_oleh: sessionUser.uid,
+        createdAt: serverTimestamp(),
+      });
+
+      batch.update(doc(db, 'students', targetStudent.id), {
+        points: increment(delta),
+        updatedAt: serverTimestamp(),
+      });
+
+      batch.set(
+        newAuditRef(),
+        buildAuditPayload({
+          actor: auditActor,
+          action: 'poin_koreksi',
+          collectionName: 'poin_log',
+          docId: revRef.id,
+          siswaId: targetStudent.id,
+          rayon: targetStudent.rayon,
+          before: { originalLogId: log.id, kode: log.kode, tipe: log.tipe, poin: log.poin },
+          after: { kode: 'KOREKSI', tipe: reversalTipe, poin: log.poin, delta },
+        })
+      );
+
+      await batch.commit();
+      setGuruSuccess(true);
+      setTimeout(() => setGuruSuccess(false), 3000);
+    } catch (err) {
+      setErrorMsg(
+        'Gagal mengoreksi poin: ' + (err instanceof Error ? err.message : String(err))
+      );
+    } finally {
+      setKoreksiLoadingId(null);
     }
   };
 
@@ -1686,13 +2187,21 @@ export function useAppModel() {
     currentStudent,
     isSiswiPutri,
     daftarKelasSemua,
+    masterKelas,
+    schoolConfig,
     effectiveKodes,
     auditActor,
     pendingPrestasi,
+    nonRutinSubmissions,
+    pendingNonRutin,
+    verifyingNonRutinId,
+    koreksiLoadingId,
     currentWeek,
     targetPoin,
     progressPct,
     studentPoinLogs,
+    harianLogs,
+    unifiedStudentLogs,
     lastKonsekuensi,
     startOfTodayMs,
     weekAgoMs,
@@ -1701,6 +2210,8 @@ export function useAppModel() {
     calculateDailyPoints,
     saveJurnal,
     saveNonRutin,
+    handleVerifyNonRutin,
+    handleKoreksiPoin,
     clearSig,
     saveSig,
     handleGuruSubmit,

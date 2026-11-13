@@ -23,7 +23,7 @@ export const LOCAL_SEED_PASSWORD = 'bkp12345';
 export const ADMIN_AWAL = {
   uid: 'lokal-admin',
   email: 'admin@lokal.test',
-  fullName: 'Admin BKP',
+  fullName: 'Admin Jejak',
   role: 'admin' as const,
 };
 

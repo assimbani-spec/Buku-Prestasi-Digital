@@ -5,7 +5,7 @@ import { doc, getDoc, getDocs, collection, setDoc, updateDoc, addDoc, writeBatch
 const RULES = fs.readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8');
 
 const env = await initializeTestEnvironment({
-  projectId: 'demo-bkp',
+  projectId: 'demo-jejak',
   firestore: { rules: RULES, host: '127.0.0.1', port: 8080 },
 });
 

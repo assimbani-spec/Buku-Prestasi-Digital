@@ -208,7 +208,7 @@ service cloud.firestore {
             && request.resource.data.tanggal is string
             && request.resource.data.poin_harian is number
             && request.resource.data.poin_harian >= 0
-            && request.resource.data.poin_harian <= 60);
+            && request.resource.data.poin_harian <= 120);
 
       allow update: if isGuruOrAdmin()
         || (isPembimbing() && request.resource.data.rayon == myRayon());
@@ -398,6 +398,55 @@ service cloud.firestore {
     match /master_kategori_poin/{kode} {
       allow read: if isSignedIn();
       allow write: if isAdmin();
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // Pengaturan profil sekolah, kop surat, & penandatangan
+    // ════════════════════════════════════════════════════════════════
+    match /pengaturan_sekolah/{settingId} {
+      allow read: if isSignedIn();
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasOnly([
+          'yayasan', 'sekolah', 'subjudul', 'alamat', 'kota',
+          'jabatanPenandatangan', 'kepalaSekolah', 'tahunAjaranAktif',
+          'semesterAktif', 'updatedBy', 'updatedAt'
+        ])
+        && (!('yayasan' in request.resource.data) || (request.resource.data.yayasan is string && request.resource.data.yayasan.size() <= 150))
+        && (!('sekolah' in request.resource.data) || (request.resource.data.sekolah is string && request.resource.data.sekolah.size() <= 150))
+        && (!('subjudul' in request.resource.data) || (request.resource.data.subjudul is string && request.resource.data.subjudul.size() <= 200))
+        && (!('alamat' in request.resource.data) || (request.resource.data.alamat is string && request.resource.data.alamat.size() <= 250))
+        && (!('kota' in request.resource.data) || (request.resource.data.kota is string && request.resource.data.kota.size() <= 80))
+        && (!('jabatanPenandatangan' in request.resource.data) || (request.resource.data.jabatanPenandatangan is string && request.resource.data.jabatanPenandatangan.size() <= 120))
+        && (!('kepalaSekolah' in request.resource.data) || (request.resource.data.kepalaSekolah is string && request.resource.data.kepalaSekolah.size() <= 120))
+        && (!('tahunAjaranAktif' in request.resource.data) || (request.resource.data.tahunAjaranAktif is string && request.resource.data.tahunAjaranAktif.size() <= 20))
+        && (!('semesterAktif' in request.resource.data) || request.resource.data.semesterAktif in ['Ganjil', 'Genap']);
+      allow delete: if isAdmin();
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // Arsip Tutup Tahun Ajaran & Kenaikan Kelas
+    // ════════════════════════════════════════════════════════════════
+    match /arsip_tahun_ajaran/{arsipId} {
+      allow read: if isGuruOrAdmin();
+      allow create: if isAdmin()
+        && request.resource.data.tahunAjaranLama is string
+        && request.resource.data.tahunAjaranLama.size() <= 20
+        && request.resource.data.tahunAjaranBaru is string
+        && request.resource.data.tahunAjaranBaru.size() <= 20
+        && request.resource.data.dibuatOlehUid == myUid();
+      allow update, delete: if isAdmin();
+    }
+
+    match /arsip_santri_tahunan/{docId} {
+      allow read: if isGuruOrAdmin()
+        || (isSiswa() && resource.data.studentId == myStudentId())
+        || (isOrtu() && resource.data.studentId in myChildIds());
+      allow create, update: if isAdmin()
+        && request.resource.data.arsipId is string
+        && request.resource.data.studentId is string
+        && request.resource.data.tahunAjaran is string
+        && request.resource.data.statusAkhir in ['naik_kelas', 'lulus', 'tetap'];
+      allow delete: if isAdmin();
     }
 
     // ════════════════════════════════════════════════════════════════

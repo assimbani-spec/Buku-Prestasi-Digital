@@ -1,5 +1,5 @@
 /**
- * RBAC untuk BKP Digital.
+ * RBAC untuk Jejak Digital.
  *
  * Satu sumber kebenaran untuk 5 peran, dipakai bersama oleh routing klien,
  * filter query Firestore, dan tampilan menu. Aturan yang SAMA juga

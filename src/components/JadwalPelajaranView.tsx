@@ -111,7 +111,7 @@ const JADWAL_TEMPLATE: Omit<JadwalPelajaranRecord, 'id' | 'kelas'>[] = [
     jam_selesai: '15:00',
     mata_pelajaran: 'Praktik Kejuruan & Laboratorium',
     guru_pengampu: 'Ustzh. Maryam, S.Kep / Apt.',
-    ruang: 'Lab Farmasi / Keperawatan',
+    ruang: 'Lab Praktik / Kejuruan',
     urutan: 3,
   },
 
@@ -222,7 +222,7 @@ export const JadwalPelajaranView: React.FC<JadwalPelajaranViewProps> = ({
   const initialActiveDay: HariSekolah = dayNamesIndo[currentDayIndex] || 'Senin';
 
   const [activeDay, setActiveDay] = useState<HariSekolah>(initialActiveDay);
-  const [selectedClass, setSelectedClass] = useState<string>(currentClass || 'X TKJ 1');
+  const [selectedClass, setSelectedClass] = useState<string>(currentClass || daftarKelas[0] || '');
   const [jadwalList, setJadwalList] = useState<JadwalPelajaranRecord[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -243,14 +243,19 @@ export const JadwalPelajaranView: React.FC<JadwalPelajaranViewProps> = ({
   const isStaff = userRole === 'guru' || userRole === 'pembimbing_rayon' || userRole === 'admin';
 
   useEffect(() => {
-    if (currentClass && currentClass !== selectedClass) {
-      setSelectedClass(currentClass);
+    const nextClass = currentClass || (!selectedClass ? daftarKelas[0] || '' : '');
+    if (nextClass && nextClass !== selectedClass) {
+      setSelectedClass(nextClass);
     }
-  }, [currentClass]);
+  }, [currentClass, daftarKelas, selectedClass]);
 
   // Load real-time schedule for selectedClass
   useEffect(() => {
-    if (!selectedClass) return;
+    if (!selectedClass) {
+      setJadwalList([]);
+      setLoading(false);
+      return;
+    }
 
     setLoading(true);
     const q = query(
@@ -407,11 +412,11 @@ export const JadwalPelajaranView: React.FC<JadwalPelajaranViewProps> = ({
             </select>
           ) : (
             <span className="px-3 py-1 bg-green-100 text-green-900 font-bold rounded-xl text-xs">
-              {selectedClass}
+              {selectedClass || 'Belum ada kelas'}
             </span>
           )}
 
-          {isStaff && (
+          {isStaff && selectedClass && (
             <button
               type="button"
               onClick={() => {
@@ -546,7 +551,7 @@ export const JadwalPelajaranView: React.FC<JadwalPelajaranViewProps> = ({
             <input
               type="text"
               required
-              placeholder="Contoh: Matematika Terapan, PAIBP, Praktik Farmasi..."
+              placeholder="Contoh: Matematika Terapan, PAIBP, Produktif Kejuruan..."
               value={formMapel}
               onChange={(e) => setFormMapel(e.target.value)}
               className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-[#2E7D32]"
@@ -612,7 +617,13 @@ export const JadwalPelajaranView: React.FC<JadwalPelajaranViewProps> = ({
 
       {/* Daftar Jadwal Hari Terpilih */}
       <div className="space-y-2.5">
-        {loading ? (
+        {!selectedClass ? (
+          <div className="text-center py-8 px-4 bg-white rounded-2xl border border-gray-200">
+            <p className="text-xs text-gray-500">
+              Belum ada Kelas / Rombel di Master Data. Tambahkan kelas terlebih dahulu di Panel Admin → Master Data atau tambah data santri.
+            </p>
+          </div>
+        ) : loading ? (
           <div className="text-center py-10 text-xs text-gray-400 bg-white rounded-2xl border border-gray-100">
             Memuat jadwal pelajaran kelas {selectedClass}…
           </div>

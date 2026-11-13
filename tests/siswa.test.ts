@@ -232,6 +232,35 @@ await test('hapusSiswa menghapus dokumen santri dan mencatat audit log', async (
   assert.equal(audit[1].before.nama, santri.name);
 });
 
+await test('tambahSiswa tanpa data wali tidak menyisipkan nilai undefined', async () => {
+  clearLocalDatabase();
+  const santri = await tambahSiswa(
+    {
+      name: 'Ahmad Tanpa Wali',
+      nisn: '0089991112',
+      kelas: 'X TKJ 1',
+      rayon: 'Assimbani 1',
+      gender: 'L',
+      points: 1000,
+      waliName: '',
+      waliPhone: '',
+      waliEmail: '',
+      studentEmail: '',
+    },
+    ADMIN
+  );
+
+  const tersimpan = (await getDoc(doc(null as unknown as never, 'students', santri.id))).data() as Record<string, unknown>;
+  assert.ok(tersimpan);
+  for (const [key, val] of Object.entries(tersimpan)) {
+    assert.notEqual(val, undefined, `Field ${key} tidak boleh bernilai undefined untuk Firestore`);
+  }
+  assert.equal('waliName' in tersimpan, false);
+  assert.equal('waliPhone' in tersimpan, false);
+  assert.equal('waliEmail' in tersimpan, false);
+  assert.equal('studentEmail' in tersimpan, false);
+});
+
 console.log('');
 console.log(`${passed}/${passed + failed} lulus`);
 if (failed > 0) process.exit(1);

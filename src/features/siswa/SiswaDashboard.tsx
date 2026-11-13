@@ -134,6 +134,7 @@ export default function SiswaDashboard({ app }: { app: AppModel }) {
     nonRutinSaving,
     nonRutinList,
     setNonRutinList,
+    nonRutinSubmissions,
     prestasiList,
     prestasiForm,
     setPrestasiForm,
@@ -142,6 +143,7 @@ export default function SiswaDashboard({ app }: { app: AppModel }) {
     showFormPrestasi,
     setShowFormPrestasi,
     poinLogs,
+    unifiedStudentLogs,
     sessionUser,
     role,
     accountEmail,
@@ -152,8 +154,12 @@ export default function SiswaDashboard({ app }: { app: AppModel }) {
     calculateDailyPoints,
     saveJurnal,
     saveNonRutin,
-    handleSubmitPrestasi
+    handleSubmitPrestasi,
+    schoolConfig
   } = app;
+
+  const [showPanduanIbadah, setShowPanduanIbadah] = useState(false);
+  const [panduanTab, setPanduanTab] = useState<'thoriqoh' | 'sholat' | 'quran'>('thoriqoh');
 
   return (
     <div className="flex-1 flex justify-center">
@@ -162,6 +168,7 @@ export default function SiswaDashboard({ app }: { app: AppModel }) {
         <Header
           fullName={currentStudent.name}
           subtitle={`Kelas: ${currentStudent.kelas} • Rayon: ${currentStudent.rayon}`}
+          schoolName={schoolConfig.sekolah}
           poin={currentStudent.points}
           onLogout={handleLogout}
         />
@@ -182,7 +189,7 @@ export default function SiswaDashboard({ app }: { app: AppModel }) {
                       : 'text-gray-500 hover:text-green-800'
                   }`}
                 >
-                  Harian
+                  Jejak Harian
                 </button>
                 <button
                   type="button"
@@ -193,7 +200,7 @@ export default function SiswaDashboard({ app }: { app: AppModel }) {
                       : 'text-gray-500 hover:text-green-800'
                   }`}
                 >
-                  Pekanan
+                  Jejak Pekanan
                 </button>
                 <button
                   type="button"
@@ -244,15 +251,15 @@ export default function SiswaDashboard({ app }: { app: AppModel }) {
               {siswaSaveSuccess && (
                 <div className="p-3 bg-green-500 text-white rounded-xl text-xs font-semibold flex items-center gap-2 shadow-sm">
                   <CheckCircle2 className="w-4 h-4" />
-                  <span>Alhamdulillah, Jurnal Pembiasaan berhasil disimpan (+{calculateDailyPoints()} Poin)!</span>
+                  <span>Alhamdulillah, Jejak Harian berhasil disimpan (+{calculateDailyPoints()} Poin)!</span>
                 </div>
               )}
 
-              {/* SUB-VIEW 1: JURNAL HARIAN LENGKAP */}
+              {/* SUB-VIEW 1: JEJAK HARIAN LENGKAP */}
               {jurnalView === 'harian' && (
                 <div className="space-y-4">
                   {/* Tanggal & Estimasi Poin */}
-                  <div className="bg-white rounded-2xl p-3 shadow-sm border border-green-100 flex items-center justify-between">
+                  <div className="bg-white rounded-2xl p-3 shadow-sm border border-green-100 flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2 text-xs font-semibold text-gray-700">
                       <Calendar className="w-4 h-4 text-[#2E7D32]" />
                       <span>Tanggal:</span>
@@ -263,11 +270,21 @@ export default function SiswaDashboard({ app }: { app: AppModel }) {
                         className="text-xs font-semibold bg-green-50 text-green-900 px-2 py-1 rounded-lg border border-green-200 outline-none"
                       />
                     </div>
-                    <div className="text-right">
-                      <span className="text-xs text-gray-400 block">Potensi Harian:</span>
-                      <span className="text-xs font-black text-[#1B5E20] bg-green-100 px-2 py-0.5 rounded-full">
-                        +{calculateDailyPoints()} Poin
-                      </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowPanduanIbadah(true)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200 rounded-xl font-bold text-xs transition-all shadow-xs"
+                      >
+                        <BookOpen className="w-3.5 h-3.5 text-emerald-700" />
+                        <span>Panduan Wirid & Niat</span>
+                      </button>
+                      <div className="text-right">
+                        <span className="text-[10px] text-gray-400 block leading-tight">Potensi:</span>
+                        <span className="text-xs font-black text-[#1B5E20] bg-green-100 px-2 py-0.5 rounded-full inline-block">
+                          +{calculateDailyPoints()} Poin
+                        </span>
+                      </div>
                     </div>
                   </div>
 
@@ -317,12 +334,24 @@ export default function SiswaDashboard({ app }: { app: AppModel }) {
                     </div>
                   )}
 
-                  {/* 1. SHOLAT TAHAJUD & SHOLAT DHUHA (Sesuai Hal 15 Dokumen BKP) */}
+                  {/* 1. SHOLAT TAHAJUD, DHUHA & SHOLAT SUNNAH LENGKAP */}
                   <div className="bg-white rounded-2xl p-4 shadow-sm border border-green-100 space-y-3">
-                    <h3 className="text-sm font-bold text-[#1B5E20] pb-2 border-b border-gray-100 flex items-center gap-2">
-                      <Moon className="w-4 h-4 text-indigo-600" />
-                      Sholat Sunnah Tahajud & Dhuha
-                    </h3>
+                    <div className="flex items-center justify-between pb-2 border-b border-gray-100">
+                      <h3 className="text-sm font-bold text-[#1B5E20] flex items-center gap-2">
+                        <Moon className="w-4 h-4 text-indigo-600" />
+                        Sholat Sunnah Harian
+                      </h3>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPanduanTab('sholat');
+                          setShowPanduanIbadah(true);
+                        }}
+                        className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-900 hover:underline"
+                      >
+                        Niat & Fadilah &rarr;
+                      </button>
+                    </div>
 
                     {/* Sholat Tahajud */}
                     <div className="bg-indigo-50/60 p-3 rounded-xl border border-indigo-100 space-y-2">
@@ -391,6 +420,53 @@ export default function SiswaDashboard({ app }: { app: AppModel }) {
                         ))}
                       </div>
                     </div>
+
+                    {/* Sholat Sunnah Tambahan Sesuai Permintaan */}
+                    <div className="pt-2 border-t border-gray-100 space-y-2">
+                      <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider block">
+                        Sholat Sunnah Tambahan & Pengiring
+                      </span>
+                      {[
+                        { key: 'sholat_taubat', label: 'Sholat Sunnah Taubat (+3 Poin)', desc: '2 rakaat memohon ampunan, taubat nasuha & tazkiyatun nafs' },
+                        { key: 'sholat_hajat', label: 'Sholat Li Qodho\'il Hajati (+3 Poin)', desc: '2 rakaat memohon kelapangan dan terkabulnya hajat/keinginan baik' },
+                        { key: 'sholat_istikharah', label: 'Sholat Sunnah Istikhoroh (+3 Poin)', desc: '2 rakaat memohon ketetapan petunjuk pilihan terbaik dari Allah SWT' },
+                        { key: 'sholat_liridhoillah', label: 'Sholat Sunnah Li Ridhollah (+3 Poin)', desc: '2 rakaat semata-mata mengharap ridho dan mahabbah Allah Ta\'ala' },
+                        { key: 'sholat_syukur', label: 'Sholat Sunnah Syukur (+3 Poin)', desc: '2 rakaat sholat wujud terima kasih atas segala nikmat Allah SWT' },
+                        { key: 'sujud_syukur', label: 'Sujud Syukur (+2 Poin)', desc: 'Sujud spontan saat meraih nikmat/prestasi atau terhindar dari musibah' },
+                        { key: 'sholat_tasbih', label: 'Sholat Sunnah Tasbih (+4 Poin)', desc: '4 rakaat dengan 300 tasbih mensucikan jiwa dan memohon ampunan dosa' },
+                        { key: 'sholat_rawatib', label: 'Sholat Sunnah Rawatib (+4 Poin)', desc: 'Qobliyah & Ba\'diyah pengiring sholat fardhu 5 waktu' },
+                        { key: 'sholat_awwabin', label: 'Sholat Sunnah Awwabin (+3 Poin)', desc: '2 s.d. 6 rakaat antara sholat Maghrib dan Isya' },
+                        { key: 'sholat_lihifdhil_iman', label: 'Sholat Sunnah Li Hifdhil Iman (+3 Poin)', desc: '2 rakaat ba\'da Maghrib memohon pemeliharaan & ketetapan iman' },
+                        { key: 'sholat_birrul_walidain', label: 'Sholat Sunnah Birrul Walidain (+3 Poin)', desc: '2 rakaat berbakti mendoakan keselamatan & ampunan orang tua' },
+                      ].map((item) => {
+                        const isChecked = Boolean(jurnal[item.key as keyof typeof jurnal]);
+                        return (
+                          <button
+                            key={item.key}
+                            type="button"
+                            aria-pressed={isChecked}
+                            onClick={() => setJurnal({ ...jurnal, [item.key]: !isChecked })}
+                            className={`block min-h-[44px] w-full rounded-control border px-2.5 py-2 text-left transition-colors ${
+                              isChecked
+                                ? 'border-brand-700/40 bg-brand-50 text-brand-900'
+                                : 'border-line bg-paper/50 text-muted hover:border-brand-700/30'
+                            }`}
+                          >
+                            <span className="flex items-center justify-between gap-2">
+                              <span className={`text-xs ${isChecked ? 'font-semibold' : 'font-medium'}`}>
+                                {item.label}
+                              </span>
+                              {isChecked ? (
+                                <CheckSquare className="h-4 w-4 shrink-0 text-brand-700" aria-hidden="true" />
+                              ) : (
+                                <Square className="h-4 w-4 shrink-0 text-muted/60" aria-hidden="true" />
+                              )}
+                            </span>
+                            <span className="mt-0.5 block text-xs text-muted">{item.desc}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
 
                   {/* 2. SHOLAT FARDHU 5 WAKTU BERJAMAAH */}
@@ -444,17 +520,30 @@ export default function SiswaDashboard({ app }: { app: AppModel }) {
                     </div>
                   </div>
 
-                  {/* 3. TILAWAH, ZIKIR PAGI & SORE */}
+                  {/* 3. TILAWAH & SURAT-SURAT PILIHAN AL-QUR'AN */}
                   <div className="bg-white rounded-2xl p-4 shadow-sm border border-green-100 space-y-2">
-                    <h3 className="text-sm font-bold text-[#1B5E20] pb-2 border-b border-gray-100 flex items-center gap-2">
-                      <BookOpen className="w-4 h-4 text-green-700" />
-                      Tilawah & Dzikir Harian
-                    </h3>
+                    <div className="flex items-center justify-between pb-2 border-b border-gray-100">
+                      <h3 className="text-sm font-bold text-[#1B5E20] flex items-center gap-2">
+                        <BookOpen className="w-4 h-4 text-green-700" />
+                        Tilawah & Surat Pilihan Al-Qur'an
+                      </h3>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPanduanTab('quran');
+                          setShowPanduanIbadah(true);
+                        }}
+                        className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-900 hover:underline"
+                      >
+                        Fadilah Surat &rarr;
+                      </button>
+                    </div>
 
                     {[
-                      { key: 'mengaji', label: 'Mengaji / Menghafal Alquran (+1 Poin)', icon: BookOpen },
-                      { key: 'zikir_pagi', label: 'Membaca Dzikir Pagi (+1 Poin)', icon: Sun },
-                      { key: 'zikir_sore', label: 'Membaca Dzikir Sore (+1 Poin)', icon: Moon },
+                      { key: 'mengaji', label: 'Mengaji / Menghafal Al-Qur\'an (+1 Poin)', desc: 'Disiplin tilawah, tadarrus, atau setoran hafalan harian', icon: BookOpen },
+                      { key: 'surat_yasin', label: 'Membaca Surat Yasin (+2 Poin)', desc: 'QS. Yasin (36: 1-83) - Jantung Al-Qur\'an, kelapangan hati', icon: BookOpen },
+                      { key: 'surat_waqiah', label: 'Membaca Surat Al-Waqi\'ah (+2 Poin)', desc: 'QS. Al-Waqi\'ah (56: 1-96) - Pembuka rezeki & berkah hidup', icon: BookOpen },
+                      { key: 'surat_al_mulk', label: 'Membaca Surat Al-Mulk (+2 Poin)', desc: 'QS. Al-Mulk (67: 1-30) Tabarak - Penyelamat dari siksa kubur', icon: BookOpen },
                     ].map((item) => {
                       const isChecked = Boolean(jurnal[item.key as keyof typeof jurnal]);
                       const Icon = item.icon;
@@ -472,11 +561,14 @@ export default function SiswaDashboard({ app }: { app: AppModel }) {
                         >
                           <span className="flex items-center gap-2">
                             <Icon
-                              className={`h-4 w-4 ${isChecked ? 'text-brand-700' : 'text-muted'}`}
+                              className={`h-4 w-4 shrink-0 ${isChecked ? 'text-brand-700' : 'text-muted'}`}
                               aria-hidden="true"
                             />
-                            <span className={`text-xs ${isChecked ? 'font-semibold' : 'font-medium'}`}>
-                              {item.label}
+                            <span>
+                              <span className={`text-xs block ${isChecked ? 'font-semibold' : 'font-medium'}`}>
+                                {item.label}
+                              </span>
+                              <span className="text-[11px] text-gray-500 block">{item.desc}</span>
                             </span>
                           </span>
                           {isChecked ? (
@@ -487,6 +579,134 @@ export default function SiswaDashboard({ app }: { app: AppModel }) {
                         </button>
                       );
                     })}
+                  </div>
+
+                  {/* 4. DZIKIR HARIAN & DZIKIR THORIQOH */}
+                  <div className="bg-white rounded-2xl p-4 shadow-sm border border-green-100 space-y-3">
+                    <div className="flex items-center justify-between pb-2 border-b border-gray-100">
+                      <h3 className="text-sm font-bold text-[#1B5E20] flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-emerald-600" />
+                        Dzikir Harian & Dzikir Thoriqoh
+                      </h3>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPanduanTab('thoriqoh');
+                          setShowPanduanIbadah(true);
+                        }}
+                        className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-900 hover:underline"
+                      >
+                        Panduan Wirid &rarr;
+                      </button>
+                    </div>
+
+                    {/* Dzikir Pagi & Sore */}
+                    <div className="space-y-2">
+                      {[
+                        { key: 'zikir_pagi', label: 'Membaca Dzikir Pagi (+1 Poin)', desc: 'Al-Ma\'tsurat / wirid pagi menjaga keberkahan hari', icon: Sun },
+                        { key: 'zikir_sore', label: 'Membaca Dzikir Sore (+1 Poin)', desc: 'Al-Ma\'tsurat / wirid sore perlindungan malam hari', icon: Moon },
+                      ].map((item) => {
+                        const isChecked = Boolean(jurnal[item.key as keyof typeof jurnal]);
+                        const Icon = item.icon;
+                        return (
+                          <button
+                            key={item.key}
+                            type="button"
+                            aria-pressed={isChecked}
+                            onClick={() => setJurnal({ ...jurnal, [item.key]: !isChecked })}
+                            className={`flex min-h-[44px] w-full items-center justify-between gap-2 rounded-control border px-2.5 py-2 text-left transition-colors ${
+                              isChecked
+                                ? 'border-brand-700/40 bg-brand-50 text-brand-900'
+                                : 'border-line bg-paper/50 text-muted hover:border-brand-700/30'
+                            }`}
+                          >
+                            <span className="flex items-center gap-2">
+                              <Icon
+                                className={`h-4 w-4 shrink-0 ${isChecked ? 'text-brand-700' : 'text-muted'}`}
+                                aria-hidden="true"
+                              />
+                              <span>
+                                <span className={`text-xs block ${isChecked ? 'font-semibold' : 'font-medium'}`}>
+                                  {item.label}
+                                </span>
+                                <span className="text-[11px] text-gray-500 block">{item.desc}</span>
+                              </span>
+                            </span>
+                            {isChecked ? (
+                              <CheckSquare className="h-4 w-4 shrink-0 text-brand-700" aria-hidden="true" />
+                            ) : (
+                              <Square className="h-4 w-4 shrink-0 text-muted/60" aria-hidden="true" />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Dzikir Thoriqoh Card Khusus */}
+                    <div className="bg-gradient-to-br from-emerald-50 via-green-50 to-emerald-100/50 p-3.5 rounded-2xl border border-emerald-300 shadow-xs">
+                      <button
+                        type="button"
+                        onClick={() => setJurnal({ ...jurnal, dzikir_thoriqoh: !jurnal.dzikir_thoriqoh })}
+                        className="w-full text-left flex items-start justify-between gap-3"
+                      >
+                        <div className="flex items-start gap-2.5">
+                          <div
+                            className={`p-2.5 rounded-xl mt-0.5 transition-colors ${
+                              jurnal.dzikir_thoriqoh
+                                ? 'bg-[#1B5E20] text-white shadow-xs'
+                                : 'bg-white text-gray-400 border border-emerald-200'
+                            }`}
+                          >
+                            <Sparkles className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span
+                                className={`text-xs font-bold ${
+                                  jurnal.dzikir_thoriqoh ? 'text-[#1B5E20]' : 'text-gray-700'
+                                }`}
+                              >
+                                Bacaan Wirid Dzikir Thoriqoh (+4 Poin)
+                              </span>
+                              <span
+                                className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                  jurnal.dzikir_thoriqoh
+                                    ? 'bg-emerald-600 text-white'
+                                    : 'bg-gray-200 text-gray-700'
+                                }`}
+                              >
+                                {jurnal.dzikir_thoriqoh ? 'Sudah Dibaca ✓' : 'Belum Dibaca'}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-emerald-900 mt-1 leading-relaxed">
+                              Istighfar 100x • Sholawat 100x • Tahlil (165x/300x) • <strong>Dzikir "Allah, Allah" (5.000x)</strong>.
+                            </p>
+                          </div>
+                        </div>
+                        {jurnal.dzikir_thoriqoh ? (
+                          <CheckSquare className="h-5 w-5 shrink-0 text-[#1B5E20] mt-0.5" />
+                        ) : (
+                          <Square className="h-5 w-5 shrink-0 text-gray-400 mt-0.5" />
+                        )}
+                      </button>
+
+                      <div className="mt-3 pt-2.5 border-t border-emerald-200 flex items-center justify-between">
+                        <span className="text-[10px] text-emerald-800 font-medium flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
+                          Wirid Rutin Harian Santri
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPanduanTab('thoriqoh');
+                            setShowPanduanIbadah(true);
+                          }}
+                          className="text-[11px] font-bold text-emerald-800 hover:text-[#1B5E20] underline flex items-center gap-1"
+                        >
+                          Buka Teks & Panduan Dzikir &rarr;
+                        </button>
+                      </div>
+                    </div>
                   </div>
 
                   {/* 4. ASPEK KESEHATAN, GROOMING & DISIPLIN (Sesuai Hal 16 Dokumen BKP) */}
@@ -556,7 +776,7 @@ export default function SiswaDashboard({ app }: { app: AppModel }) {
                     <span>
                       {jurnalSaving
                         ? 'Menyimpan...'
-                        : `Simpan Jurnal Harian (+${calculateDailyPoints()} Pts)`}
+                        : `Simpan Jejak Harian (+${calculateDailyPoints()} Pts)`}
                     </span>
                   </button>
                 </div>
@@ -589,7 +809,7 @@ export default function SiswaDashboard({ app }: { app: AppModel }) {
                       { key: 'ekstrakurikuler', label: '10. Hadir Ekstrakurikuler (+50 Poin)' },
                       { key: 'seni_budaya', label: '11. Hadir Seni Budaya (+50 Poin)' },
                       { key: 'kumpul_rayon', label: '12. Hadir Kumpul Rayon (+50 Poin)' },
-                      { key: 'input_kejar_id', label: '13. Input Rekap BKP ke Kejar.id (+100 Poin)' },
+                      { key: 'input_kejar_id', label: '13. Input Rekap Jejak ke Kejar.id (+100 Poin)' },
                     ].map((item) => {
                       const isChecked = Boolean(mingguan[item.key as keyof typeof mingguan]);
                       return (
@@ -640,7 +860,7 @@ export default function SiswaDashboard({ app }: { app: AppModel }) {
                       <div>
                         <div className="flex items-center gap-2">
                           <h3 className="text-xs font-bold text-[#1B5E20]">Panduan Pengisian Kegiatan Non-Rutin</h3>
-                          <span className="text-xs bg-green-200 text-green-900 font-bold px-1.5 py-0.2 rounded">BKP Hal. 20</span>
+                          <span className="text-xs bg-green-200 text-green-900 font-bold px-1.5 py-0.2 rounded">Jejak Hal. 20</span>
                         </div>
                         <p className="text-xs text-gray-700 mt-1 leading-relaxed">
                           <strong>Kegiatan ini diisi mandiri oleh Siswa</strong> pada periode terkait (3-Mingguan, 9-Mingguan, atau Semester), kemudian disetujui / ditandatangani Orang Tua & Guru/Wali Rayon.
@@ -678,11 +898,51 @@ export default function SiswaDashboard({ app }: { app: AppModel }) {
                     </div>
                   </div>
 
+                  {/* Status Verifikasi Non-Rutin Pekan Ini */}
+                  {(() => {
+                    const currentPeriode = `${new Date().getFullYear()}_P${currentWeek}`;
+                    const currentNr = nonRutinSubmissions.find((s) => s.periode === currentPeriode);
+                    if (!currentNr) return null;
+                    return (
+                      <div
+                        className={`p-3 rounded-xl border text-xs flex items-start justify-between gap-2 ${
+                          currentNr.status === 'verified'
+                            ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                            : currentNr.status === 'rejected'
+                              ? 'bg-rose-50 border-rose-200 text-rose-900'
+                              : 'bg-amber-50 border-amber-200 text-amber-900'
+                        }`}
+                      >
+                        <div>
+                          <span className="font-bold block">
+                            {currentNr.status === 'verified'
+                              ? `Terverifikasi Guru/Pembimbing (${(currentNr.poin_disetujui ?? currentNr.net_poin) >= 0 ? '+' : ''}${currentNr.poin_disetujui ?? currentNr.net_poin} Poin)`
+                              : currentNr.status === 'rejected'
+                                ? 'Perlu Revisi / Ditolak Pembimbing'
+                                : 'Menunggu Verifikasi Guru / Pembimbing Rayon'}
+                          </span>
+                          {currentNr.catatan_verifikasi && (
+                            <span className="text-[11px] block mt-0.5 opacity-90">
+                              Catatan: "{currentNr.catatan_verifikasi}"
+                            </span>
+                          )}
+                        </div>
+                        <span className="px-2 py-0.5 rounded-full font-bold text-[10px] uppercase bg-white/80 border border-current/20 shrink-0">
+                          {currentNr.status === 'verified'
+                            ? 'Disetujui'
+                            : currentNr.status === 'rejected'
+                              ? 'Revisi'
+                              : 'Pending'}
+                        </span>
+                      </div>
+                    );
+                  })()}
+
                   {/* Notifikasi Simpan Berhasil */}
                   {nonRutinSaveSuccess && (
                     <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-2 text-xs text-emerald-800 animate-fade-in shadow-sm">
                       <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                      <span>Isian kegiatan non-rutin pekan ini tersimpan.</span>
+                      <span>Isian kegiatan non-rutin pekan ini tersimpan & menunggu verifikasi pembimbing.</span>
                     </div>
                   )}
 
@@ -784,27 +1044,39 @@ export default function SiswaDashboard({ app }: { app: AppModel }) {
                   </div>
 
                   {/* Tombol Simpan Form Non-Rutin */}
-                  <button
-                    type="button"
-                    onClick={saveNonRutin}
-                    disabled={nonRutinSaving}
-                    className="flex w-full items-center justify-center gap-2 rounded-control bg-brand-700 py-3 text-xs font-semibold text-white transition-colors hover:bg-brand-800 disabled:bg-brand-700/50"
-                  >
-                    {nonRutinSaving ? (
-                      <>
-                        <span
-                          className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white"
-                          aria-hidden="true"
-                        />
-                        Menyimpan
-                      </>
-                    ) : (
-                      <>
-                        <Save className="h-4 w-4" aria-hidden="true" />
-                        Simpan isian pekan ini
-                      </>
-                    )}
-                  </button>
+                  {(() => {
+                    const currentPeriode = `${new Date().getFullYear()}_P${currentWeek}`;
+                    const currentNr = nonRutinSubmissions.find((s) => s.periode === currentPeriode);
+                    const isVerified = currentNr?.status === 'verified';
+                    return (
+                      <button
+                        type="button"
+                        onClick={saveNonRutin}
+                        disabled={nonRutinSaving || isVerified}
+                        className="flex w-full items-center justify-center gap-2 rounded-control bg-brand-700 py-3 text-xs font-semibold text-white transition-colors hover:bg-brand-800 disabled:bg-brand-700/50"
+                      >
+                        {nonRutinSaving ? (
+                          <>
+                            <span
+                              className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white"
+                              aria-hidden="true"
+                            />
+                            Menyimpan
+                          </>
+                        ) : isVerified ? (
+                          <>
+                            <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                            Sudah Diverifikasi Pekan Ini
+                          </>
+                        ) : (
+                          <>
+                            <Save className="h-4 w-4" aria-hidden="true" />
+                            Simpan isian pekan ini
+                          </>
+                        )}
+                      </button>
+                    );
+                  })()}
                 </div>
               )}
 
@@ -915,7 +1187,7 @@ export default function SiswaDashboard({ app }: { app: AppModel }) {
                     <span>Ibadah & Karakter Hari Ini</span>
                   </h3>
                   <button onClick={() => setSiswaTab('jurnal')} className="text-xs text-[#2E7D32] font-semibold hover:underline">
-                    Buka Jurnal &rarr;
+                    Buka Jejak &rarr;
                   </button>
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-xs">
@@ -1014,7 +1286,9 @@ export default function SiswaDashboard({ app }: { app: AppModel }) {
                     {currentStudent.points} Pts
                   </span>
                 </div>
-                <p className="text-xs text-gray-500">Standar minimal kelulusan karakter: 1000 Poin</p>
+                <p className="text-xs text-gray-500">
+                  Standar minimal kelulusan karakter: 1.000 poin (saldo awal 1.000 + Jejak Harian + Prestasi terverifikasi + Apresiasi/Konsekuensi Guru BK).
+                </p>
               </div>
 
               {/* Filter Poin & Prestasi */}
@@ -1240,19 +1514,26 @@ export default function SiswaDashboard({ app }: { app: AppModel }) {
                 </div>
               )}
 
-              {/* Riwayat Mutasi Poin Karakter */}
-              {(poinTabFilter === 'semua' || poinTabFilter === 'apresiasi' || poinTabFilter === 'konsekuensi') && (
-                <div className="space-y-2">
-                  <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider px-1">
-                    Catatan Apresiasi & Konsekuensi Harian
-                  </h4>
-                  {poinLogs
-                    .filter((p) => {
-                      if (poinTabFilter === 'apresiasi') return p.tipe === 'apresiasi';
-                      if (poinTabFilter === 'konsekuensi') return p.tipe === 'konsekuensi';
-                      return true;
-                    })
-                    .map((log) => (
+              {/* Riwayat Mutasi Poin Karakter (Jejak Harian + Guru/BK) */}
+              {(poinTabFilter === 'semua' || poinTabFilter === 'apresiasi' || poinTabFilter === 'konsekuensi') && (() => {
+                const mutasiRows = unifiedStudentLogs
+                  .filter((l) => l.sumber !== 'prestasi')
+                  .filter((p) => {
+                    if (poinTabFilter === 'apresiasi') return p.tipe === 'apresiasi';
+                    if (poinTabFilter === 'konsekuensi') return p.tipe === 'konsekuensi';
+                    return true;
+                  });
+                return (
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider px-1">
+                      Riwayat Jejak Harian & Catatan Guru/BK ({mutasiRows.length})
+                    </h4>
+                    {mutasiRows.length === 0 && (
+                      <p className="text-xs text-gray-500 px-3 py-3 bg-white rounded-xl text-center border border-gray-100">
+                        Belum ada catatan Jejak Harian atau poin Guru/BK untuk filter ini.
+                      </p>
+                    )}
+                    {mutasiRows.map((log) => (
                       <div
                         key={log.id}
                         className={`bg-white rounded-2xl p-3.5 shadow-sm border flex items-start justify-between gap-2 ${
@@ -1260,7 +1541,16 @@ export default function SiswaDashboard({ app }: { app: AppModel }) {
                         }`}
                       >
                         <div>
-                          <div className="flex items-center gap-1.5 mb-1">
+                          <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                            <span
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
+                                log.sumber === 'jejak_harian'
+                                  ? 'bg-sky-50 text-sky-800 border border-sky-200'
+                                  : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                              }`}
+                            >
+                              {log.sumberLabel}
+                            </span>
                             <span
                               className={`text-xs font-bold px-2 py-0.5 rounded-md ${
                                 log.tipe === 'apresiasi' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
@@ -1281,8 +1571,9 @@ export default function SiswaDashboard({ app }: { app: AppModel }) {
                         </span>
                       </div>
                     ))}
-                </div>
-              )}
+                  </div>
+                );
+              })()}
             </div>
           )}
 
@@ -1335,6 +1626,413 @@ export default function SiswaDashboard({ app }: { app: AppModel }) {
             </div>
           )}
         </div>
+
+        {/* Modal Panduan Wirid Thoriqoh, Niat Sholat Sunnah & Fadilah Al-Qur'an */}
+        {showPanduanIbadah && (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 overflow-y-auto">
+            <div className="bg-white rounded-3xl max-w-xl w-full shadow-2xl border border-green-100 overflow-hidden my-6 animate-in fade-in duration-200 flex flex-col max-h-[90vh]">
+              {/* Header Modal */}
+              <div className="bg-[#1B5E20] text-white px-5 py-4 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 bg-green-800 rounded-2xl">
+                    <BookOpen className="w-5 h-5 text-green-200" />
+                  </div>
+                  <div>
+                    <h2 className="text-base font-bold">Panduan Ibadah & Wirid Santri</h2>
+                    <p className="text-xs text-green-200">
+                      Rujukan niat sholat sunnah, wirid thoriqoh, & fadilah surat pilihan
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowPanduanIbadah(false)}
+                  className="p-1.5 rounded-xl hover:bg-green-800 text-green-200 hover:text-white transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Tab Selector */}
+              <div className="bg-gray-50 border-b border-gray-200 px-4 pt-3 flex gap-2 shrink-0">
+                {[
+                  { id: 'thoriqoh', label: 'Wirid Thoriqoh' },
+                  { id: 'sholat', label: 'Sholat Sunnah' },
+                  { id: 'quran', label: 'Surat Pilihan' },
+                ].map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setPanduanTab(t.id as any)}
+                    className={`py-2 px-3 text-xs font-bold rounded-t-xl transition-all ${
+                      panduanTab === t.id
+                        ? 'bg-white text-[#1B5E20] border-t-2 border-t-[#2E7D32] shadow-xs'
+                        : 'text-gray-500 hover:text-gray-900'
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Content Body Scrollable */}
+              <div className="p-5 overflow-y-auto space-y-4 text-xs flex-1">
+                {/* TAB 1: DZIKIR THORIQOH */}
+                {panduanTab === 'thoriqoh' && (
+                  <div className="space-y-4">
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3.5">
+                      <span className="text-xs font-bold text-emerald-950 block">
+                        Adab & Urutan Wirid Dzikir Thoriqoh Harian
+                      </span>
+                      <p className="text-[11px] text-emerald-800 mt-1 leading-relaxed">
+                        Dibaca secara istiqomah setiap hari dengan duduk khusyuk menghadap kiblat, merenungi keagungan Allah SWT dan menghadirkan bimbingan guru mursyid.
+                      </p>
+                    </div>
+
+                    <div className="space-y-3">
+                      {/* 1. Istighfar */}
+                      <div className="bg-gray-50 rounded-2xl p-3.5 border border-gray-200 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-gray-900 text-xs">1. Membaca Istighfar (100x)</span>
+                          <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                            100 Hitungan
+                          </span>
+                        </div>
+                        <p className="text-right font-serif text-base text-gray-900 leading-loose py-1">
+                          أَسْتَغْفِرُ اللهَ الْعَظِيْمَ الَّذِيْ لَا إِلٰهَ إِلَّا هُوَ الْحَيُّ الْقَيُّوْمُ وَأَتُوْبُ إِلَيْهِ
+                        </p>
+                        <p className="text-gray-700 italic text-[11px]">
+                          Astaghfirullaahal 'Adzhiim alladzii laa ilaaha illaa huwal hayyul qayyuumu wa atuubu ilaih.
+                        </p>
+                        <p className="text-gray-500 text-[11px]">
+                          Artinya: "Aku memohon ampunan kepada Allah Yang Maha Agung, tiada Tuhan selain Dia Yang Maha Hidup lagi Berdiri Sendiri, dan aku bertaubat kepada-Nya."
+                        </p>
+                      </div>
+
+                      {/* 2. Sholawat */}
+                      <div className="bg-gray-50 rounded-2xl p-3.5 border border-gray-200 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-gray-900 text-xs">2. Membaca Sholawat Nabi (100x)</span>
+                          <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                            100 Hitungan
+                          </span>
+                        </div>
+                        <p className="text-right font-serif text-base text-gray-900 leading-loose py-1">
+                          اللّٰهُمَّ صَلِّ عَلٰى سَيِّدِنَا مُحَمَّدٍ وَعَلٰى آلِ سَيِّدِنَا مُحَمَّدٍ
+                        </p>
+                        <p className="text-gray-700 italic text-[11px]">
+                          Allaahumma shalli 'alaa sayyidinaa Muhammadin wa 'alaa aali sayyidinaa Muhammad.
+                        </p>
+                        <p className="text-gray-500 text-[11px]">
+                          Artinya: "Ya Allah, limpahkanlah rahmat kepada junjungan kami Nabi Muhammad beserta seluruh keluarga beliau."
+                        </p>
+                      </div>
+
+                      {/* 3. Tahlil */}
+                      <div className="bg-gray-50 rounded-2xl p-3.5 border border-gray-200 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-gray-900 text-xs">
+                            3. Dzikir Nafi Isbat / Tahlil (165x / 300x)
+                          </span>
+                          <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                            165x atau 300x
+                          </span>
+                        </div>
+                        <p className="text-right font-serif text-base text-gray-900 leading-loose py-1">
+                          لَا إِلٰهَ إِلَّا اللهُ
+                        </p>
+                        <p className="text-gray-700 italic text-[11px]">
+                          Laa ilaaha illallaah.
+                        </p>
+                        <p className="text-gray-500 text-[11px]">
+                          Dihayati dengan menafikan segala sesembahan dan hawa nafsu batin, lalu menetapkan wujud dan keesaan Allah semata di dalam kalbu.
+                        </p>
+                      </div>
+
+                      {/* 4. Dzikir Ismu Dzat "Allah, Allah" (5.000x) */}
+                      <div className="bg-gradient-to-br from-emerald-50 to-green-50 rounded-2xl p-4 border border-emerald-300 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-emerald-950 text-xs">
+                            4. Dzikir Ismu Dzat "Allah, Allah" (5.000x)
+                          </span>
+                          <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-600 text-white shadow-2xs">
+                            5.000 Hitungan
+                          </span>
+                        </div>
+                        <p className="text-right font-serif text-2xl text-emerald-950 font-bold tracking-widest py-1">
+                          اللهُ ... اللهُ
+                        </p>
+                        <p className="text-emerald-900 italic text-[11px] font-semibold">
+                          Allaah, Allaah (Dzikir Ismu Dzat / Dzikir Qolbi 5.000x)
+                        </p>
+                        <p className="text-emerald-800 text-[11px] leading-relaxed">
+                          Dizikirkan di dalam kalbu (Dzikir Sirri / Lathaif) sebanyak 5.000 kali. Duduk khusyuk, mata terpejam, lidah dilekatkan ke langit-langit mulut, dan arahkan ingatan menghujam ke lathifah hati sanubari (dua jari di bawah puting susu kiri) dengan merasakan keagungan dan kehadiran Dzat Allah Ta'ala semata.
+                        </p>
+
+                        {/* Keterangan Dzikir 5.000 */}
+                        <div className="bg-white/90 backdrop-blur-xs p-3.5 rounded-2xl border border-emerald-200 text-xs text-emerald-950 flex items-center justify-between">
+                          <span className="font-semibold text-[11px] text-emerald-900">Target Harian: 5.000 kali Ismu Dzat</span>
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                            +5 Poin Jejak
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* 5. Munajat */}
+                      <div className="bg-emerald-50/80 rounded-2xl p-3.5 border border-emerald-200 space-y-2">
+                        <span className="font-bold text-emerald-950 text-xs block">
+                          5. Doa Munajat & Penutup Dzikir Thoriqoh
+                        </span>
+                        <p className="text-right font-serif text-base text-emerald-950 leading-loose py-1">
+                          إِلٰهِيْ أَنْتَ مَقْصُوْدِيْ وَرِضَاكَ مَطْلُوْبِيْ أَعْطِنِيْ مَحَبَّتَكَ وَمَعْرِفَتَكَ
+                        </p>
+                        <p className="text-emerald-900 italic text-[11px]">
+                          Ilaahii Anta maqshuudii wa ridhaaka mathluubii, a'thinii mahabbataka wa ma'rifataka.
+                        </p>
+                        <p className="text-emerald-800 text-[11px]">
+                          "Duhai Tuhanku, hanya Engkaulah tujuanku dan keridhaan-Mu lah yang kucari. Anugerahilah daku rasa cinta kepada-Mu serta ma'rifat sejati kepada-Mu."
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 2: SHOLAT SUNNAH */}
+                {panduanTab === 'sholat' && (
+                  <div className="space-y-3">
+                    {/* Sholat Taubat */}
+                    <div className="bg-gray-50 rounded-2xl p-3.5 border border-gray-200 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-gray-900 text-xs">1. Sholat Sunnah Taubat (2 Rakaat)</span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">
+                          +3 Poin Jejak
+                        </span>
+                      </div>
+                      <p className="text-gray-700 italic text-[11px]">
+                        Niat: "Ushallii sunnatat taubati rak'ataini lillaahi ta'aalaa"
+                      </p>
+                      <p className="text-gray-500 text-[11px]">
+                        Dilaksanakan 2 rakaat disusul istighfar dan penyesalan tulus. Menghapus kekhilafan dan menyucikan hati santri.
+                      </p>
+                    </div>
+
+                    {/* Sholat Hajat */}
+                    <div className="bg-gray-50 rounded-2xl p-3.5 border border-gray-200 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-gray-900 text-xs">2. Sholat Sunnah Li Qodho'il Hajati (2 Rakaat)</span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-teal-100 text-teal-800">
+                          +3 Poin Jejak
+                        </span>
+                      </div>
+                      <p className="text-gray-700 italic text-[11px]">
+                        Niat: "Ushallii sunnatal haajati rak'ataini lillaahi ta'aalaa"
+                      </p>
+                      <p className="text-gray-500 text-[11px]">
+                        Dilaksanakan ketika memiliki hajat, cita-cita, atau kesulitan hidup. Memohon pertolongan dan ijabah dari Allah SWT.
+                      </p>
+                    </div>
+
+                    {/* Sholat Istikhoroh */}
+                    <div className="bg-gray-50 rounded-2xl p-3.5 border border-gray-200 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-gray-900 text-xs">3. Sholat Sunnah Istikhoroh (2 Rakaat)</span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800">
+                          +3 Poin Jejak
+                        </span>
+                      </div>
+                      <p className="text-gray-700 italic text-[11px]">
+                        Niat: "Ushallii sunnatal istikhaarati rak'ataini lillaahi ta'aalaa"
+                      </p>
+                      <p className="text-gray-500 text-[11px]">
+                        Dilaksanakan 2 rakaat untuk memohon kemantapan hati dan petunjuk terbaik dari Allah saat dihadapkan pada pilihan atau keputusan penting.
+                      </p>
+                    </div>
+
+                    {/* Sholat Li Ridhollah */}
+                    <div className="bg-gray-50 rounded-2xl p-3.5 border border-gray-200 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-gray-900 text-xs">4. Sholat Sunnah Li Ridhollah (2 Rakaat)</span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                          +3 Poin Jejak
+                        </span>
+                      </div>
+                      <p className="text-gray-700 italic text-[11px]">
+                        Niat: "Ushallii sunnatan liridhallahi ta'aala rak'ataini lillaahi ta'aalaa"
+                      </p>
+                      <p className="text-gray-500 text-[11px]">
+                        Sholat sunnah dengan niat murni mencari ridha Allah semata, membersihkan niat ibadah dari pamrih keduniaan.
+                      </p>
+                    </div>
+
+                    {/* Sholat Syukur */}
+                    <div className="bg-gray-50 rounded-2xl p-3.5 border border-gray-200 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-gray-900 text-xs">5. Sholat Sunnah Syukur (2 Rakaat)</span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+                          +3 Poin Jejak
+                        </span>
+                      </div>
+                      <p className="text-gray-700 italic text-[11px]">
+                        Niat: "Ushallii sunnatasy syukri rak'ataini lillaahi ta'aalaa"
+                      </p>
+                      <p className="text-gray-500 text-[11px]">
+                        Wujud syukur mendalam atas limpahan nikmat, kesehatan, ilmu bermanfaat, dan keselamatan yang dianugerahkan Allah Ta'ala.
+                      </p>
+                    </div>
+
+                    {/* Sujud Syukur */}
+                    <div className="bg-gray-50 rounded-2xl p-3.5 border border-gray-200 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-gray-900 text-xs">6. Sujud Syukur (1 Kali Sujud di Luar Sholat)</span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-cyan-100 text-cyan-800">
+                          +2 Poin Jejak
+                        </span>
+                      </div>
+                      <p className="text-gray-700 italic text-[11px]">
+                        Niat: "Nawaitu sujuudasy syukri lillaahi ta'aalaa"
+                      </p>
+                      <p className="text-gray-500 text-[11px]">
+                        Dilakukan satu kali sujud menghadap kiblat saat menerima kabar gembira atau terhindar dari marabahaya, membaca tasbih dan tahmid.
+                      </p>
+                    </div>
+
+                    {/* Sholat Tasbih */}
+                    <div className="bg-gray-50 rounded-2xl p-3.5 border border-gray-200 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-gray-900 text-xs">7. Sholat Sunnah Tasbih (4 Rakaat, 300x Tasbih)</span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-800">
+                          +4 Poin Jejak
+                        </span>
+                      </div>
+                      <p className="text-gray-700 italic text-[11px]">
+                        Niat: "Ushallii sunnatat tasbiihi arba'a raka'aatin lillaahi ta'aalaa"
+                      </p>
+                      <p className="text-gray-500 text-[11px]">
+                        4 rakaat dengan membaca 75 kali tasbih (Subhaanallaahi walhamdu lillaahi wa laa ilaaha illallaahu wallaahu akbar) di setiap rakaat. Pelebur dosa besar dan penenang jiwa.
+                      </p>
+                    </div>
+
+                    {/* Sholat Rawatib */}
+                    <div className="bg-gray-50 rounded-2xl p-3.5 border border-gray-200 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-gray-900 text-xs">8. Sholat Rawatib Qobliyah & Ba'diyah</span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                          +4 Poin Jejak
+                        </span>
+                      </div>
+                      <p className="text-gray-700 italic text-[11px]">
+                        Niat: "Ushallii sunnatal [Dzuhri/Ashri/Maghribi/Isya'i/Fajri] rak'ataini [qabliyyatan/ba'diyyatan] lillaahi ta'aalaa"
+                      </p>
+                      <p className="text-gray-500 text-[11px]">
+                        Sholat pengiring sholat fardhu yang menjadi penyempurna pahala dan tameng dari api neraka.
+                      </p>
+                    </div>
+
+                    {/* Sholat Awwabin */}
+                    <div className="bg-gray-50 rounded-2xl p-3.5 border border-gray-200 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-gray-900 text-xs">9. Sholat Sunnah Awwabin (2 s.d. 6 Rakaat)</span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800">
+                          +3 Poin Jejak
+                        </span>
+                      </div>
+                      <p className="text-gray-700 italic text-[11px]">
+                        Niat: "Ushallii sunnatal awwaabiina rak'ataini lillaahi ta'aalaa"
+                      </p>
+                      <p className="text-gray-500 text-[11px]">
+                        Dilaksanakan antara waktu Maghrib dan Isya. Merupakan amalan orang-orang yang senantiasa bertaubat kembali kepada Allah.
+                      </p>
+                    </div>
+
+                    {/* Sholat Li Hifdhil Iman */}
+                    <div className="bg-gray-50 rounded-2xl p-3.5 border border-gray-200 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-gray-900 text-xs">10. Sholat Sunnah Li Hifdhil Iman (2 Rakaat)</span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+                          +3 Poin Jejak
+                        </span>
+                      </div>
+                      <p className="text-gray-700 italic text-[11px]">
+                        Niat: "Ushallii sunnatal lihifdhil iimaani rak'ataini lillaahi ta'aalaa"
+                      </p>
+                      <p className="text-gray-500 text-[11px]">
+                        Rutin ba'da Maghrib. Diniatkan memohon ketetapan iman dan Islam agar terlindung dari keraguan dan wafat dalam keadaan husnul khotimah.
+                      </p>
+                    </div>
+
+                    {/* Sholat Birrul Walidain */}
+                    <div className="bg-gray-50 rounded-2xl p-3.5 border border-gray-200 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-gray-900 text-xs">11. Sholat Sunnah Birrul Walidain (2 Rakaat)</span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-100 text-rose-800">
+                          +3 Poin Jejak
+                        </span>
+                      </div>
+                      <p className="text-gray-700 italic text-[11px]">
+                        Niat: "Ushallii sunnatan libirril waalidaini rak'ataini lillaahi ta'aalaa"
+                      </p>
+                      <p className="text-gray-500 text-[11px]">
+                        Wujud bakti santri kepada kedua orang tua. Di dalam sujud dan ba'da sholat dipanjatkan doa kebaikan, ampunan, serta kesehatan untuk ayah dan ibu.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 3: SURAT PILIHAN */}
+                {panduanTab === 'quran' && (
+                  <div className="space-y-3">
+                    <div className="bg-gray-50 rounded-2xl p-3.5 border border-gray-200 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-gray-900 text-xs">1. Surat Yasin (QS. 36: 1-83)</span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-green-100 text-green-800">
+                          +2 Poin Jejak
+                        </span>
+                      </div>
+                      <p className="text-gray-500 text-[11px] leading-relaxed">
+                        Rasulullah SAW menyebutnya sebagai jantung Al-Qur'an (Qolbul Qur'an). Membacanya di pagi atau malam hari melapangkan dada, menghadirkan ampunan Allah, dan mempermudah segala hajat urusan.
+                      </p>
+                    </div>
+
+                    <div className="bg-gray-50 rounded-2xl p-3.5 border border-gray-200 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-gray-900 text-xs">2. Surat Al-Waqi'ah (QS. 56: 1-96)</span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-green-100 text-green-800">
+                          +2 Poin Jejak
+                        </span>
+                      </div>
+                      <p className="text-gray-500 text-[11px] leading-relaxed">
+                        Surat pembuka pintu kelapangan rezeki dan keberkahan hidup. Santri yang istiqomah membacanya dilindungi dari kesempitan dunia dan dianugerahi ketenangan jiwa.
+                      </p>
+                    </div>
+
+                    <div className="bg-gray-50 rounded-2xl p-3.5 border border-gray-200 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-gray-900 text-xs">3. Surat Al-Mulk (QS. 67: 1-30)</span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-green-100 text-green-800">
+                          +2 Poin Jejak
+                        </span>
+                      </div>
+                      <p className="text-gray-500 text-[11px] leading-relaxed">
+                        Surat Tabarak / Al-Munfadzah (Penyelamat). 30 ayat yang senantiasa membela pembacanya di alam kubur hingga diampuni dan dibebaskan dari siksa kubur (HR. Abu Dawud & At-Tirmidzi).
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="p-4 border-t border-gray-100 bg-gray-50 flex items-center justify-end shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowPanduanIbadah(false)}
+                  className="px-5 py-2 bg-[#2E7D32] hover:bg-[#1B5E20] text-white font-bold text-xs rounded-xl shadow-sm transition-all"
+                >
+                  Tutup Panduan
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Mobile Bottom Nav */}
         <BottomNav

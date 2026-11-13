@@ -19,6 +19,7 @@ export interface LoginPageProps {
   resetLoading?: boolean;
   onLoginGoogle?: () => Promise<void>;
   googleLoading?: boolean;
+  schoolName?: string;
 }
 
 export default function LoginPage({
@@ -38,6 +39,7 @@ export default function LoginPage({
   resetLoading = false,
   onLoginGoogle,
   googleLoading = false,
+  schoolName,
 }: LoginPageProps) {
   const [showForgotModal, setShowForgotModal] = useState(false);
   const [forgotEmail, setForgotEmail] = useState('');
@@ -67,12 +69,12 @@ export default function LoginPage({
                 <BookOpen className="h-5 w-5 text-brand-100" aria-hidden="true" />
               </span>
               <div>
-                <h1 className="text-lg font-semibold leading-tight">BKP Digital</h1>
-                <p className="text-xs text-brand-100">Buku Kejar Prestasi</p>
+                <h1 className="text-lg font-semibold leading-tight">Jejak Digital</h1>
+                <p className="text-xs text-brand-100">Jejak Prestasi</p>
               </div>
             </div>
             <p className="mt-3 text-xs leading-relaxed text-brand-100">
-              SMK Thibbil Qulub Assimbani. Jurnal pembiasaan, poin karakter, dan pengesahan wali santri.
+              {schoolName || 'SMK Thibbil Qulub Assimbani'}. Jejak pembiasaan, poin karakter, dan pengesahan wali santri.
             </p>
           </div>
 

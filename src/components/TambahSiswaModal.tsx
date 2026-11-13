@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { UserPlus, X, Save, AlertCircle, CheckCircle2, User, Phone, Mail, Award, Edit } from 'lucide-react';
 import type { StudentRecord } from '../lib/tipe';
 import { tambahSiswa, updateSiswa } from '../features/siswa/siswa';
@@ -21,32 +21,6 @@ interface TambahSiswaModalProps {
   editingStudent?: StudentRecord | null;
 }
 
-const DEFAULT_KELAS = [
-  'X TKJ 1',
-  'X TKJ 2',
-  'X Farmasi A',
-  'X Farmasi B',
-  'X Keperawatan A',
-  'X Keperawatan B',
-  'XI Farmasi A',
-  'XI Farmasi B',
-  'XI Keperawatan A',
-  'XI Keperawatan B',
-  'XII Farmasi Industri',
-  'XII Keperawatan Medikal',
-];
-
-const DEFAULT_RAYON = [
-  'Simbang 2',
-  'Assimbani 1',
-  'Assimbani 2',
-  'Siti Khadijah 1',
-  'Siti Khadijah 2',
-  'Siti Aisyah 1',
-  'Siti Aisyah 2',
-  'Ibnu Sina',
-];
-
 export const TambahSiswaModal: React.FC<TambahSiswaModalProps> = ({
   isOpen,
   onClose,
@@ -55,14 +29,16 @@ export const TambahSiswaModal: React.FC<TambahSiswaModalProps> = ({
   actor,
   editingStudent,
 }) => {
-  const [daftarKelas, setDaftarKelas] = useState<string[]>(DEFAULT_KELAS);
-  const [daftarRayon, setDaftarRayon] = useState<string[]>(DEFAULT_RAYON);
+  const [daftarKelas, setDaftarKelas] = useState<string[]>([]);
+  const [daftarRayon, setDaftarRayon] = useState<string[]>([]);
+  const [manualKelas, setManualKelas] = useState(false);
+  const [manualRayon, setManualRayon] = useState(false);
 
   const [name, setName] = useState('');
   const [nisn, setNisn] = useState('');
-  const [gender, setGender] = useState<'L' | 'P'>('P');
-  const [kelas, setKelas] = useState(DEFAULT_KELAS[2]);
-  const [rayon, setRayon] = useState(DEFAULT_RAYON[1]);
+  const [gender, setGender] = useState<'L' | 'P'>('L');
+  const [kelas, setKelas] = useState('');
+  const [rayon, setRayon] = useState('');
   const [waliName, setWaliName] = useState('');
   const [waliPhone, setWaliPhone] = useState('');
   const [waliEmail, setWaliEmail] = useState('');
@@ -73,55 +49,102 @@ export const TambahSiswaModal: React.FC<TambahSiswaModalProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState(false);
 
-  // Muat daftar kelas dan rayon dari master data secara real-time
+  // Menyimpan penanda modal terbuka agar form tidak di-reset saat parent re-render
+  const prevIsOpenRef = useRef(false);
+  const prevEditingIdRef = useRef<string | undefined>(undefined);
+
+  // Muat daftar kelas dan rayon strictly dari master data secara real-time
   useEffect(() => {
     const unsubs = [
       onSnapshot(collection(db, 'master_kelas'), (snap) => {
-        const dbKelas = snap.docs.map((d) => ((d.data() as any).nama || d.id).trim()).filter(Boolean);
-        const combined = Array.from(new Set([...DEFAULT_KELAS, ...dbKelas])).sort((a, b) =>
+        const dbKelas: string[] = snap.docs
+          .map((d: any) => String((d.data() as any).nama || d.id).trim())
+          .filter(Boolean);
+        const sorted = Array.from<string>(new Set<string>(dbKelas)).sort((a, b) =>
           a.localeCompare(b, undefined, { numeric: true })
         );
-        setDaftarKelas(combined);
+        setDaftarKelas(sorted);
       }),
       onSnapshot(collection(db, 'master_rayon'), (snap) => {
-        const dbRayon = snap.docs.map((d) => ((d.data() as any).nama || d.id).trim()).filter(Boolean);
-        const combined = Array.from(new Set([...DEFAULT_RAYON, ...dbRayon])).sort((a, b) =>
+        const dbRayon: string[] = snap.docs
+          .map((d: any) => String((d.data() as any).nama || d.id).trim())
+          .filter(Boolean);
+        const sorted = Array.from<string>(new Set<string>(dbRayon)).sort((a, b) =>
           a.localeCompare(b, undefined, { numeric: true })
         );
-        setDaftarRayon(combined);
+        setDaftarRayon(sorted);
       }),
     ];
     return () => unsubs.forEach((u) => u());
   }, []);
 
-  // Isi form jika sedang dalam mode edit
+  // Hanya isi/reset form saat modal BARU pertama kali dibuka atau santri yang diedit berganti
   useEffect(() => {
-    if (editingStudent) {
-      setName(editingStudent.name || '');
-      setNisn(editingStudent.nisn || '');
-      setGender(editingStudent.gender || 'P');
-      setKelas(editingStudent.kelas || (daftarKelas[0] ?? ''));
-      setRayon(editingStudent.rayon || (daftarRayon[0] ?? ''));
-      setWaliName(editingStudent.waliName || '');
-      setWaliPhone(editingStudent.waliPhone || '');
-      setWaliEmail(editingStudent.waliEmail || '');
-      setStudentEmail(editingStudent.studentEmail || '');
-      setInitialPoints(editingStudent.points ?? 1000);
-    } else {
-      setName('');
-      setNisn('');
-      setGender('P');
-      setKelas(daftarKelas[0] ?? DEFAULT_KELAS[0]);
-      setRayon(daftarRayon[0] ?? DEFAULT_RAYON[0]);
-      setWaliName('');
-      setWaliPhone('');
-      setWaliEmail('');
-      setStudentEmail('');
-      setInitialPoints(1000);
+    const justOpened = isOpen && !prevIsOpenRef.current;
+    const switchedStudent = isOpen && editingStudent?.id !== prevEditingIdRef.current;
+
+    if (justOpened || switchedStudent) {
+      if (editingStudent) {
+        setName(editingStudent.name || '');
+        setNisn(editingStudent.nisn || '');
+        setGender(editingStudent.gender === 'P' ? 'P' : 'L');
+        setKelas(editingStudent.kelas || daftarKelas[0] || '');
+        setRayon(editingStudent.rayon || daftarRayon[0] || '');
+        setManualKelas(daftarKelas.length === 0 && !editingStudent.kelas);
+        setManualRayon(daftarRayon.length === 0 && !editingStudent.rayon);
+        setWaliName(editingStudent.waliName || '');
+        setWaliPhone(editingStudent.waliPhone || '');
+        setWaliEmail(editingStudent.waliEmail || '');
+        setStudentEmail(editingStudent.studentEmail || '');
+        setInitialPoints(editingStudent.points ?? 1000);
+      } else {
+        setName('');
+        setNisn('');
+        setGender('L'); // Default awal Putra (Laki-laki)
+        setKelas(daftarKelas[0] || '');
+        setRayon(daftarRayon[0] || '');
+        setManualKelas(daftarKelas.length === 0);
+        setManualRayon(daftarRayon.length === 0);
+        setWaliName('');
+        setWaliPhone('');
+        setWaliEmail('');
+        setStudentEmail('');
+        setInitialPoints(1000);
+      }
+      setErrorMsg(null);
+      setSuccessMsg(false);
     }
-    setErrorMsg(null);
-    setSuccessMsg(false);
-  }, [editingStudent, isOpen]);
+
+    prevIsOpenRef.current = isOpen;
+    prevEditingIdRef.current = editingStudent?.id;
+  }, [isOpen, editingStudent, daftarKelas, daftarRayon]);
+
+  // Jika Master Data baru selesai dimuat saat form tambah santri belum terisi kelas/rayon, pilih item pertama otomatis
+  useEffect(() => {
+    if (isOpen && !editingStudent && !manualKelas && !kelas && daftarKelas.length > 0) {
+      setKelas(daftarKelas[0]);
+    }
+  }, [isOpen, editingStudent, manualKelas, kelas, daftarKelas]);
+
+  useEffect(() => {
+    if (isOpen && !editingStudent && !manualRayon && !rayon && daftarRayon.length > 0) {
+      setRayon(daftarRayon[0]);
+    }
+  }, [isOpen, editingStudent, manualRayon, rayon, daftarRayon]);
+
+  const kelasOptions = Array.from(
+    new Set([
+      ...(editingStudent?.kelas && editingStudent.kelas !== '-' ? [editingStudent.kelas] : []),
+      ...daftarKelas,
+    ])
+  ).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+
+  const rayonOptions = Array.from(
+    new Set([
+      ...(editingStudent?.rayon && editingStudent.rayon !== '-' ? [editingStudent.rayon] : []),
+      ...daftarRayon,
+    ])
+  ).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
   if (!isOpen) return null;
 
@@ -133,6 +156,14 @@ export const TambahSiswaModal: React.FC<TambahSiswaModalProps> = ({
     }
     if (!nisn.trim()) {
       setErrorMsg('NISN santri wajib diisi.');
+      return;
+    }
+    if (!kelas.trim()) {
+      setErrorMsg('Kelas & rombel santri wajib diisi atau dipilih dari Master Data.');
+      return;
+    }
+    if (!rayon.trim()) {
+      setErrorMsg('Rayon asrama santri wajib diisi atau dipilih dari Master Data.');
       return;
     }
     if (!actor) {
@@ -229,7 +260,7 @@ export const TambahSiswaModal: React.FC<TambahSiswaModalProps> = ({
               <p className="text-xs text-green-200">
                 {editingStudent
                   ? `Mengubah rincian kelas/rayon santri: ${editingStudent.name}`
-                  : 'Tambahkan master santri ke Buku Kejar Prestasi (BKP)'}
+                  : 'Tambahkan master santri ke Jejak Digital'}
               </p>
             </div>
           </div>
@@ -296,29 +327,33 @@ export const TambahSiswaModal: React.FC<TambahSiswaModalProps> = ({
               </div>
 
               <div>
-                <label className="block font-semibold text-gray-700 mb-1">Jenis Kelamin</label>
-                <div className="grid grid-cols-2 gap-1.5 pt-0.5">
+                <label className="block font-semibold text-gray-700 mb-1">
+                  Jenis Kelamin <span className="text-red-500">*</span>
+                </label>
+                <div className="grid grid-cols-2 gap-2 pt-0.5">
                   <button
                     type="button"
                     onClick={() => setGender('L')}
-                    className={`py-1.5 px-2 rounded-xl border text-xs font-semibold transition-all ${
+                    className={`py-2 px-2.5 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
                       gender === 'L'
-                        ? 'bg-blue-50 border-blue-400 text-blue-900 shadow-xs'
-                        : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'
+                        ? 'bg-blue-600 border-blue-600 text-white shadow-sm ring-2 ring-blue-200'
+                        : 'bg-white border-gray-200 text-gray-700 hover:bg-blue-50'
                     }`}
                   >
-                    Putra (L)
+                    <span className={`w-2 h-2 rounded-full ${gender === 'L' ? 'bg-white' : 'bg-gray-300'}`} />
+                    <span>Putra (L)</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => setGender('P')}
-                    className={`py-1.5 px-2 rounded-xl border text-xs font-semibold transition-all ${
+                    className={`py-2 px-2.5 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
                       gender === 'P'
-                        ? 'bg-rose-50 border-rose-400 text-rose-900 shadow-xs'
-                        : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'
+                        ? 'bg-rose-600 border-rose-600 text-white shadow-sm ring-2 ring-rose-200'
+                        : 'bg-white border-gray-200 text-gray-700 hover:bg-rose-50'
                     }`}
                   >
-                    Putri (P)
+                    <span className={`w-2 h-2 rounded-full ${gender === 'P' ? 'bg-white' : 'bg-gray-300'}`} />
+                    <span>Putri (P)</span>
                   </button>
                 </div>
               </div>
@@ -339,35 +374,88 @@ export const TambahSiswaModal: React.FC<TambahSiswaModalProps> = ({
 
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="block font-semibold text-gray-700 mb-1">Kelas & Rombel</label>
-                <select
-                  value={kelas}
-                  onChange={(e) => setKelas(e.target.value)}
-                  className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:border-[#2E7D32] outline-none font-medium"
-                >
-                  {daftarKelas.map((k) => (
-                    <option key={k} value={k}>
-                      {k}
-                    </option>
-                  ))}
-                </select>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="font-semibold text-gray-700">
+                    Kelas & Rombel <span className="text-red-500">*</span>
+                  </label>
+                  {kelasOptions.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setManualKelas((v) => !v)}
+                      className="text-[10px] font-semibold text-[#2E7D32] hover:underline"
+                    >
+                      {manualKelas ? 'Pilih Master' : 'Ketik manual'}
+                    </button>
+                  )}
+                </div>
+                {!manualKelas && kelasOptions.length > 0 ? (
+                  <select
+                    value={kelas}
+                    onChange={(e) => setKelas(e.target.value)}
+                    className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:border-[#2E7D32] outline-none font-medium"
+                  >
+                    {kelasOptions.map((k) => (
+                      <option key={k} value={k}>
+                        {k}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    required
+                    placeholder="Contoh: X A / XI IPA 1"
+                    value={kelas}
+                    onChange={(e) => setKelas(e.target.value)}
+                    className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:border-[#2E7D32] outline-none"
+                  />
+                )}
               </div>
 
               <div>
-                <label className="block font-semibold text-gray-700 mb-1">Rayon Asrama</label>
-                <select
-                  value={rayon}
-                  onChange={(e) => setRayon(e.target.value)}
-                  className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:border-[#2E7D32] outline-none font-medium"
-                >
-                  {daftarRayon.map((r) => (
-                    <option key={r} value={r}>
-                      {r}
-                    </option>
-                  ))}
-                </select>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="font-semibold text-gray-700">
+                    Rayon Asrama <span className="text-red-500">*</span>
+                  </label>
+                  {rayonOptions.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setManualRayon((v) => !v)}
+                      className="text-[10px] font-semibold text-[#2E7D32] hover:underline"
+                    >
+                      {manualRayon ? 'Pilih Master' : 'Ketik manual'}
+                    </button>
+                  )}
+                </div>
+                {!manualRayon && rayonOptions.length > 0 ? (
+                  <select
+                    value={rayon}
+                    onChange={(e) => setRayon(e.target.value)}
+                    className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:border-[#2E7D32] outline-none font-medium"
+                  >
+                    {rayonOptions.map((r) => (
+                      <option key={r} value={r}>
+                        {r}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    required
+                    placeholder="Contoh: Rayon 1 / Al-Ghazali"
+                    value={rayon}
+                    onChange={(e) => setRayon(e.target.value)}
+                    className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:border-[#2E7D32] outline-none"
+                  />
+                )}
               </div>
             </div>
+            {(daftarKelas.length === 0 || daftarRayon.length === 0) && (
+              <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                Master Data Kelas/Rayon di Panel Admin masih kosong. Anda dapat mengetik manual di atas atau mengaturnya terlebih dahulu di Panel Admin → Master Data.
+              </p>
+            )}
 
             <div>
               <label className="block font-semibold text-gray-700 mb-1">

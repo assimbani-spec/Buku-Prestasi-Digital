@@ -36,8 +36,8 @@ export function downloadTemplateSiswa() {
     {
       'NISN': '0071234501',
       'Nama Lengkap': 'Muhammad Farhan Al-Ghifari',
-      'Kelas': 'X Farmasi A',
-      'Rayon': 'Rayon Siti Aisyah 1',
+      'Kelas': 'X A',
+      'Rayon': 'Rayon 1',
       'Poin Awal': 1000,
       'Nama Wali': 'H. Syamsul Hadi',
       'No HP Wali': '081234567801',
@@ -47,8 +47,8 @@ export function downloadTemplateSiswa() {
     {
       'NISN': '0071234502',
       'Nama Lengkap': 'Ahmad Fauzi Rabbani',
-      'Kelas': 'X Farmasi A',
-      'Rayon': 'Rayon Siti Aisyah 1',
+      'Kelas': 'X A',
+      'Rayon': 'Rayon 1',
       'Poin Awal': 1000,
       'Nama Wali': 'Drs. Supriyanto',
       'No HP Wali': '081234567802',
@@ -58,8 +58,8 @@ export function downloadTemplateSiswa() {
     {
       'NISN': '0071234503',
       'Nama Lengkap': 'Siti Nur Aisyah',
-      'Kelas': 'X Keperawatan B',
-      'Rayon': 'Rayon Khadijah 2',
+      'Kelas': 'X B',
+      'Rayon': 'Rayon 2',
       'Poin Awal': 1000,
       'Nama Wali': 'Hj. Aminah',
       'No HP Wali': '081234567803',
@@ -84,7 +84,7 @@ export function downloadTemplateSiswa() {
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Template Santri');
-  XLSX.writeFile(wb, 'Template_Import_Siswa_BKP.xlsx');
+  XLSX.writeFile(wb, 'Template_Import_Siswa_Jejak.xlsx');
 }
 
 /**
@@ -331,3 +331,139 @@ export function parseKategoriRows(
 
   return { valid, invalid };
 }
+
+/**
+ * Ekspor Rekapan Poin Santri Bulanan ke format file Excel (.xlsx)
+ */
+export function exportRekapSiswaExcel(
+  student: { name: string; nisn?: string; kelas: string; rayon: string; points: number; waliName?: string },
+  logs: Array<{ kode: string; tipe: string; deskripsi: string; poin: number; time: string; sumberLabel?: string; sumber?: string }>,
+  bulanLabel: string,
+  breakdown?: { jejakHarian: number; prestasi: number; guruApresiasi: number; konsekuensi: number },
+  sekolahNama: string = 'SMK THIBBIL QULUB ASSIMBANI'
+) {
+  const wb = XLSX.utils.book_new();
+
+  const totalApresiasi = logs.filter((l) => l.tipe === 'apresiasi').reduce((acc, l) => acc + l.poin, 0);
+  const totalKonsekuensi = logs.filter((l) => l.tipe === 'konsekuensi').reduce((acc, l) => acc + l.poin, 0);
+
+  // Sheet 1: Rangkuman & Informasi Santri
+  const ringkasanData = [
+    { 'Informasi Dokumen': 'LEMBAR REKAPITULASI POIN JEJAK', 'Nilai': '' },
+    { 'Informasi Dokumen': 'Sekolah / Pondok', 'Nilai': sekolahNama },
+    { 'Informasi Dokumen': 'Periode Bulan', 'Nilai': bulanLabel },
+    { 'Informasi Dokumen': 'Nama Santri', 'Nilai': student.name },
+    { 'Informasi Dokumen': 'NISN', 'Nilai': student.nisn || '-' },
+    { 'Informasi Dokumen': 'Kelas', 'Nilai': student.kelas },
+    { 'Informasi Dokumen': 'Rayon', 'Nilai': student.rayon },
+    { 'Informasi Dokumen': 'Wali Santri', 'Nilai': student.waliName || '-' },
+    { 'Informasi Dokumen': 'Total Poin Karakter Saat Ini (Saldo Awal 1000 + Mutasi)', 'Nilai': student.points },
+    { 'Informasi Dokumen': 'Poin Jejak Harian Bulan Ini', 'Nilai': breakdown ? `+${breakdown.jejakHarian}` : '-' },
+    { 'Informasi Dokumen': 'Poin Prestasi Terverifikasi Bulan Ini', 'Nilai': breakdown ? `+${breakdown.prestasi}` : '-' },
+    { 'Informasi Dokumen': 'Apresiasi Guru / BK Bulan Ini', 'Nilai': breakdown ? `+${breakdown.guruApresiasi}` : '-' },
+    { 'Informasi Dokumen': 'Total Apresiasi Bulan Ini', 'Nilai': `+${totalApresiasi}` },
+    { 'Informasi Dokumen': 'Total Konsekuensi Bulan Ini', 'Nilai': `-${breakdown ? breakdown.konsekuensi : totalKonsekuensi}` },
+    { 'Informasi Dokumen': 'Poin Bersih (Net) Bulan Ini', 'Nilai': totalApresiasi - totalKonsekuensi },
+    { 'Informasi Dokumen': 'Jumlah Catatan Transaksi', 'Nilai': logs.length },
+    { 'Informasi Dokumen': 'Tanggal Dicetak/Unduh', 'Nilai': new Date().toLocaleDateString('id-ID', { dateStyle: 'long' }) },
+  ];
+  const wsRingkasan = XLSX.utils.json_to_sheet(ringkasanData);
+  wsRingkasan['!cols'] = [{ wch: 44 }, { wch: 35 }];
+  XLSX.utils.book_append_sheet(wb, wsRingkasan, 'Rangkuman Santri');
+
+  // Sheet 2: Rincian Catatan Mutasi Poin
+  const rincianData = logs.map((log, idx) => ({
+    'No': idx + 1,
+    'Waktu / Tanggal': log.time,
+    'Sumber Poin': log.sumberLabel || 'Guru / BK',
+    'Kode': log.kode,
+    'Jenis': log.tipe === 'apresiasi' ? 'Apresiasi (+)' : 'Konsekuensi (-)',
+    'Poin': log.tipe === 'apresiasi' ? `+${log.poin}` : `-${log.poin}`,
+    'Deskripsi Perilaku / Jejak / Prestasi': log.deskripsi,
+  }));
+
+  const wsRincian = XLSX.utils.json_to_sheet(
+    rincianData.length > 0 ? rincianData : [{ 'No': 1, 'Keterangan': 'Tidak ada mutasi poin pada bulan ini' }]
+  );
+  wsRincian['!cols'] = [
+    { wch: 6 },
+    { wch: 22 },
+    { wch: 16 },
+    { wch: 12 },
+    { wch: 18 },
+    { wch: 12 },
+    { wch: 52 },
+  ];
+  XLSX.utils.book_append_sheet(wb, wsRincian, 'Rincian Poin');
+
+  const safeName = student.name.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const safeBulan = bulanLabel.replace(/[^a-zA-Z0-9_-]/g, '_');
+  XLSX.writeFile(wb, `Rekap_Jejak_${safeName}_${safeBulan}.xlsx`);
+}
+
+/**
+ * Ekspor Rekapan Kolektif Kelas ke format file Excel (.xlsx)
+ */
+export function exportRekapKelasExcel(
+  kelas: string,
+  bulanLabel: string,
+  rows: Array<{
+    no: number;
+    nisn: string;
+    name: string;
+    kelas: string;
+    rayon: string;
+    totalPoints: number;
+    jejakBulanIni?: number;
+    prestasiBulanIni?: number;
+    guruApresiasiBulanIni?: number;
+    apresiasiBulanIni: number;
+    konsekuensiBulanIni: number;
+    netBulanIni: number;
+    predikat: string;
+  }>,
+  sekolahNama: string = 'SMK THIBBIL QULUB ASSIMBANI'
+) {
+  const wb = XLSX.utils.book_new();
+
+  const exportData = rows.map((r) => ({
+    'No': r.no,
+    'NISN': r.nisn,
+    'Nama Lengkap Santri': r.name,
+    'Kelas': r.kelas,
+    'Rayon': r.rayon,
+    'Total Poin Karakter': r.totalPoints,
+    'Jejak Harian': `+${r.jejakBulanIni ?? 0}`,
+    'Prestasi': `+${r.prestasiBulanIni ?? 0}`,
+    'Apresiasi Guru/BK': `+${r.guruApresiasiBulanIni ?? 0}`,
+    'Total Apresiasi Bulan Ini': `+${r.apresiasiBulanIni}`,
+    'Konsekuensi Bulan Ini': `-${r.konsekuensiBulanIni}`,
+    'Poin Bersih Bulan Ini': r.netBulanIni >= 0 ? `+${r.netBulanIni}` : `${r.netBulanIni}`,
+    'Predikat / Status Karakter': r.predikat,
+    'Sekolah': sekolahNama,
+  }));
+
+  const ws = XLSX.utils.json_to_sheet(exportData);
+  ws['!cols'] = [
+    { wch: 6 },
+    { wch: 15 },
+    { wch: 30 },
+    { wch: 16 },
+    { wch: 20 },
+    { wch: 18 },
+    { wch: 14 },
+    { wch: 14 },
+    { wch: 18 },
+    { wch: 20 },
+    { wch: 20 },
+    { wch: 20 },
+    { wch: 25 },
+    { wch: 28 },
+  ];
+
+  XLSX.utils.book_append_sheet(wb, ws, `Rekap ${kelas.slice(0, 20)}`);
+  const safeKelas = kelas.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const safeBulan = bulanLabel.replace(/[^a-zA-Z0-9_-]/g, '_');
+  XLSX.writeFile(wb, `Rekap_Kolektif_Jejak_${safeKelas}_${safeBulan}.xlsx`);
+}
+

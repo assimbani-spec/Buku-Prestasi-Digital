@@ -1,5 +1,5 @@
 /**
- * Tipe domain BKP Digital.
+ * Tipe domain Jejak Digital.
  *
  * Tipe di sini tidak bergantung pada Firebase maupun driver data mana pun,
  * sehingga module fitur bisa memakainya tanpa mengimpor konfigurasi backend.
@@ -36,6 +36,8 @@ export interface UserProfile {
   updatedAt?: any;
 }
 
+export type StudentLifecycleStatus = 'aktif' | 'lulus' | 'arsip';
+
 // Student Data Interface for Guru Management
 export interface StudentRecord {
   id: string;
@@ -46,6 +48,12 @@ export interface StudentRecord {
   points: number;
   /** Jenis Kelamin: L = Laki-laki, P = Perempuan */
   gender?: 'L' | 'P';
+  /** Status aktif santri: aktif (default), lulus (alumni), atau arsip */
+  statusSiswa?: StudentLifecycleStatus;
+  /** Tahun ajaran aktif terakhir yang diikuti santri (mis. '2025/2026') */
+  tahunAjaran?: string;
+  /** Tahun ajaran kelulusan / pengarsipan (jika lulus/arsip) */
+  tahunLulus?: string;
   /** UID Firebase Authentication jika akun santri sudah ditautkan. */
   uid?: string;
   waliName?: string;
@@ -54,6 +62,40 @@ export interface StudentRecord {
   studentEmail?: string;
   lastJournalDate?: string;
   createdAt?: string;
+}
+
+export interface ArsipTahunAjaranRecord {
+  id: string;
+  tahunAjaranLama: string;
+  tahunAjaranBaru: string;
+  modeResetPoin: 'reset_default' | 'pertahankan';
+  poinDefaultBaru: number;
+  catatan?: string;
+  ringkasan: {
+    totalDiproses: number;
+    naikKelas: number;
+    lulus: number;
+    tetap: number;
+  };
+  dibuatOlehUid: string;
+  dibuatOlehEmail?: string;
+  createdAt?: any;
+}
+
+export interface ArsipSantriTahunanRecord {
+  id: string;
+  arsipId: string;
+  tahunAjaran: string;
+  studentId: string;
+  nisn: string;
+  name: string;
+  kelasLama: string;
+  kelasBaru: string;
+  rayon: string;
+  statusAkhir: 'naik_kelas' | 'lulus' | 'tetap';
+  poinAkhir: number;
+  poinBaru: number;
+  createdAt?: any;
 }
 
 // Pengajuan prestasi: siswa mengajukan (pending), staf memverifikasi.
